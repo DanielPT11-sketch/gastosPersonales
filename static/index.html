@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mis gastos</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <main class="app">
+    <header class="resumen" aria-live="polite">
+      <p class="resumen-etiqueta">Total gastado</p>
+      <p id="total" class="resumen-total">$ 0</p>
+      <p id="cantidad" class="resumen-detalle">Sin gastos registrados</p>
+    </header>
+
+    <section class="rango" aria-label="Rango de fechas">
+      <div class="campo-rango">
+        <label for="desde">Desde</label>
+        <input type="date" id="desde">
+      </div>
+      <div class="campo-rango">
+        <label for="hasta">Hasta</label>
+        <input type="date" id="hasta">
+      </div>
+      <button type="button" id="btn-mes" class="btn-secundario">Este mes</button>
+      <button type="button" id="btn-todo" class="btn-secundario">Ver todo</button>
+    </section>
+
+    <section class="panel" aria-labelledby="titulo-form">
+      <h2 id="titulo-form">Nuevo gasto</h2>
+      <form id="form-gasto" novalidate>
+        <div class="fila">
+          <div class="campo">
+            <label for="fecha">Fecha</label>
+            <input type="date" id="fecha" name="fecha" required>
+          </div>
+          <div class="campo">
+            <label for="categoria">Categoría</label>
+            <select id="categoria" name="categoria" required>
+              <option value="Alimentación">Alimentación</option>
+              <option value="Transporte">Transporte</option>
+              <option value="Servicios">Servicios</option>
+              <option value="Vivienda">Vivienda</option>
+              <option value="Salud">Salud</option>
+              <option value="Ocio">Ocio</option>
+              <option value="Educación">Educación</option>
+              <option value="Otros">Otros</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="campo">
+          <label for="concepto">Concepto</label>
+          <input type="text" id="concepto" name="concepto" maxlength="120"
+                 placeholder="Ej. Mercado de la semana" autocomplete="off" required>
+        </div>
+
+        <div class="campo">
+          <label for="monto">Monto</label>
+          <input type="number" id="monto" name="monto" min="0.01" step="0.01"
+                 inputmode="decimal" placeholder="0" required>
+        </div>
+
+        <p id="mensaje" class="mensaje" role="alert" hidden></p>
+        <button type="submit" class="btn-primario">Agregar gasto</button>
+      </form>
+    </section>
+
+    <section class="panel" aria-labelledby="titulo-lista">
+      <div class="panel-cabecera">
+        <h2 id="titulo-lista">Historial</h2>
+        <button type="button" id="btn-historial" class="btn-secundario"
+                aria-expanded="false" aria-controls="contenido-historial">Ver historial</button>
+      </div>
+      <div id="contenido-historial" hidden>
+        <ul id="lista-gastos" class="lista"></ul>
+        <p id="vacio" class="vacio" hidden>No hay gastos en este período.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/js/main.js"></script>
+</body>
+</html>
