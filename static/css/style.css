@@ -158,3 +158,17 @@ input[aria-invalid="true"] { border-color: var(--peligro); }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* Importar extracto */
+#msg-importar { margin: 1rem 0 0; }
+#importar-detalle { margin-top: 1rem; }
+.mensaje-ok { color: #1f7a4d; }
+.ayuda { margin: 0 0 0.75rem; color: var(--tinta-suave); font-size: 0.9rem; }
+.fila-mapeo { display: grid; grid-template-columns: 1fr 1fr; gap: 0 0.75rem; }
+.lista-importar { max-height: 22rem; overflow-y: auto; margin: 0.75rem 0 1rem; padding-right: 0.25rem; }
+.fila-importar { grid-template-columns: auto 1fr auto; }
+.fila-importar input[type="checkbox"] { width: 1.1rem; height: 1.1rem; }
+.fila-importar select { grid-column: 2 / -1; justify-self: start; width: auto; padding: 0.3rem 0.5rem; font-size: 0.85rem; }
+.acciones { display: flex; gap: 0.75rem; align-items: center; }
+.acciones .btn-primario { width: auto; flex: 1; }
+@media (max-width: 480px) { .fila-mapeo { grid-template-columns: 1fr; } }

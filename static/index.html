@@ -67,6 +67,41 @@
       </form>
     </section>
 
+    <section class="panel" aria-labelledby="titulo-importar">
+      <div class="panel-cabecera">
+        <h2 id="titulo-importar">Importar extracto</h2>
+        <button type="button" id="btn-elegir-csv" class="btn-secundario">Elegir archivo CSV</button>
+        <input type="file" id="archivo-csv" accept=".csv,text/csv,text/plain" hidden>
+      </div>
+      <p id="msg-importar" class="mensaje" role="alert" hidden></p>
+      <div id="importar-detalle" hidden>
+        <p class="ayuda">Revisa que las columnas sean las correctas. Solo se importan los egresos; puedes desmarcar filas o cambiar su categoría.</p>
+        <div class="fila-mapeo">
+          <div class="campo"><label for="col-fecha">Columna de fecha</label><select id="col-fecha"></select></div>
+          <div class="campo"><label for="col-concepto">Columna de concepto</label><select id="col-concepto"></select></div>
+          <div class="campo"><label for="col-monto">Columna de monto</label><select id="col-monto"></select></div>
+          <div class="campo"><label for="formato-fecha">Formato de fecha</label>
+            <select id="formato-fecha">
+              <option value="dmy">Día/Mes/Año (31/12/2026)</option>
+              <option value="mdy">Mes/Día/Año (12/31/2026)</option>
+            </select>
+          </div>
+          <div class="campo"><label for="modo-monto">Los gastos son</label>
+            <select id="modo-monto">
+              <option value="negativos">Valores negativos (ignora los positivos)</option>
+              <option value="todos">Todos los valores (ignora ceros y vacíos)</option>
+            </select>
+          </div>
+        </div>
+        <p id="resumen-importar" class="resumen-detalle"></p>
+        <ul id="lista-importar" class="lista lista-importar"></ul>
+        <div class="acciones">
+          <button type="button" id="btn-confirmar-importar" class="btn-primario">Importar seleccionados</button>
+          <button type="button" id="btn-cancelar-importar" class="btn-secundario">Cancelar</button>
+        </div>
+      </div>
+    </section>
+
     <section class="panel" aria-labelledby="titulo-lista">
       <div class="panel-cabecera">
         <h2 id="titulo-lista">Historial</h2>

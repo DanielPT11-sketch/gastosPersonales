@@ -1,6 +1,7 @@
 """Servidor Flask y API REST del seguimiento de gastos."""
 import math
 import os
+from collections import Counter
 from contextlib import closing
 from datetime import datetime
 
@@ -13,6 +14,8 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 # Los archivos de la carpeta 'static' se sirven en /static/...
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/static")
+
+MAX_IMPORTAR = 5000
 
 init_db()
 
@@ -87,6 +90,50 @@ def crear_gasto():
             nuevo_id = cursor.lastrowid
 
     return jsonify({"id": nuevo_id, **gasto}), 201
+
+
+def clave_gasto(fecha, concepto, monto):
+    return (fecha, str(concepto).strip().lower(), round(float(monto), 2))
+
+
+@app.route("/api/gastos/importar", methods=["POST"])
+def importar_gastos():
+    datos = request.get_json(silent=True)
+    if not isinstance(datos, dict) or not isinstance(datos.get("gastos"), list):
+        return jsonify({"error": "Se esperaba un JSON con la lista 'gastos'."}), 400
+    if len(datos["gastos"]) > MAX_IMPORTAR:
+        return jsonify({"error": f"Máximo {MAX_IMPORTAR} movimientos por importación."}), 400
+
+    validos, invalidos = [], 0
+    for item in datos["gastos"]:
+        gasto, error = validar_gasto(item)
+        if error:
+            invalidos += 1
+        else:
+            validos.append(gasto)
+
+    importados = duplicados = 0
+    with closing(get_connection()) as conn:
+        with conn:
+            # Se cuentan los gastos ya guardados: así dos compras idénticas del mismo
+            # día en el archivo se importan ambas, pero reimportar el archivo no duplica.
+            existentes = Counter(
+                clave_gasto(f["fecha"], f["concepto"], f["monto"])
+                for f in conn.execute("SELECT fecha, concepto, monto FROM gastos")
+            )
+            for g in validos:
+                clave = clave_gasto(g["fecha"], g["concepto"], g["monto"])
+                if existentes[clave] > 0:
+                    existentes[clave] -= 1
+                    duplicados += 1
+                    continue
+                conn.execute(
+                    "INSERT INTO gastos (fecha, concepto, monto, categoria) VALUES (?, ?, ?, ?)",
+                    (g["fecha"], g["concepto"], g["monto"], g["categoria"]),
+                )
+                importados += 1
+
+    return jsonify({"importados": importados, "duplicados": duplicados, "invalidos": invalidos})
 
 
 @app.route("/api/gastos/<int:gasto_id>", methods=["DELETE"])
