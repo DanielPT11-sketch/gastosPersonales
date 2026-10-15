@@ -172,3 +172,5 @@ input[aria-invalid="true"] { border-color: var(--peligro); }
 .acciones { display: flex; gap: 0.75rem; align-items: center; }
 .acciones .btn-primario { width: auto; flex: 1; }
 @media (max-width: 480px) { .fila-mapeo { grid-template-columns: 1fr; } }
+
+.ayuda-fija { margin: 0.75rem 0 0; }

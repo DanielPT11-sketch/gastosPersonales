@@ -281,7 +281,7 @@ function indiceEncabezado(filas) {
   // (los bancos suelen poner líneas de título antes de la tabla).
   const pareceNumero = (t) => /\d/.test(t) && /^[\s$()+\-\d.,/:]+$/.test(t);
   for (let i = 0; i < Math.min(filas.length, 30); i++) {
-    const llenas = filas[i].filter((c) => c.trim());
+    const llenas = filas[i].map((c) => String(c ?? "").trim()).filter(Boolean);
     if (llenas.length >= 3 && !llenas.some(pareceNumero)) return i;
   }
   return 0;
@@ -302,6 +302,7 @@ function parsearFecha(texto, formato) {
 }
 
 function parsearMonto(texto) {
+  if (typeof texto === "number") return Number.isFinite(texto) ? texto : null; // celdas numéricas de Excel
   let t = String(texto).trim();
   if (!t) return null;
   let negativo = false;
@@ -333,7 +334,7 @@ function autodetectarColumnas() {
   const { encabezados, filas } = datosCSV;
   const norm = encabezados.map(normalizar);
   const muestra = filas.slice(0, 50);
-  const valores = (i) => muestra.map((f) => (f[i] || "").trim());
+  const valores = (i) => muestra.map((f) => String(f[i] ?? "").trim());
   const buscar = (re, excluir) => norm.findIndex((h, i) => re.test(h) && !excluir.includes(i));
   const mejor = (puntaje, excluir, minimo) => {
     let idx = -1;
@@ -368,9 +369,13 @@ function llenarSelectoresColumnas() {
 
 function procesarTextoCSV(texto) {
   texto = texto.replace(/^\uFEFF/, "");
-  const filas = parsearCSV(texto, detectarDelimitador(texto));
+  procesarFilas(parsearCSV(texto, detectarDelimitador(texto)));
+}
+
+// Recibe la tabla ya separada en filas (viene de un CSV o de un Excel)
+function procesarFilas(filas) {
   const inicio = indiceEncabezado(filas);
-  const encabezados = (filas[inicio] || []).map((h) => h.trim());
+  const encabezados = (filas[inicio] || []).map((h) => String(h ?? "").trim());
   const datos = filas.slice(inicio + 1);
   if (encabezados.length < 3 || datos.length === 0) {
     throw new Error("No se encontró una tabla de movimientos en el archivo.");
@@ -384,7 +389,7 @@ function procesarTextoCSV(texto) {
   colMonto.value = String(cols.monto);
 
   // ¿Mes/Día/Año? Si algún segundo número supera 12 y ningún primero lo hace.
-  const partes = datos.map((f) => (f[cols.fecha] || "").trim().match(/^(\d{1,2})[-/.](\d{1,2})[-/.]\d{2,4}/)).filter(Boolean);
+  const partes = datos.map((f) => String(f[cols.fecha] ?? "").trim().match(/^(\d{1,2})[-/.](\d{1,2})[-/.]\d{2,4}/)).filter(Boolean);
   const mdy = partes.some((p) => +p[2] > 12) && !partes.some((p) => +p[1] > 12);
   formatoFechaCSV.value = mdy ? "mdy" : "dmy";
 
@@ -420,7 +425,7 @@ function construirFilasImportar() {
     const esIngreso = modoMonto.value === "negativos" && valor > 0;
     if (!fecha || valor === null || valor === 0 || esIngreso) { omitidasImportar++; continue; }
 
-    const concepto = (f[iC] || "").replace(/\s+/g, " ").trim().slice(0, 120) || "Sin descripción";
+    const concepto = String(f[iC] ?? "").replace(/\s+/g, " ").trim().slice(0, 120) || "Sin descripción";
     const monto = Math.abs(valor);
     const clave = claveGasto(fecha, concepto, monto);
     const duplicado = (registrados.get(clave) || 0) > 0;
@@ -498,6 +503,25 @@ async function leerTexto(archivo) {
   }
 }
 
+async function leerExcel(archivo) {
+  const datos = new FormData();
+  datos.append("archivo", archivo);
+  const respuesta = await fetch(`${API_URL}/importar/excel`, { method: "POST", body: datos });
+  const cuerpo = await respuesta.json().catch(() => ({}));
+  if (!respuesta.ok) {
+    throw new Error(cuerpo.error || "No se pudo leer el Excel. Reinicia el servidor con el app.py más reciente.");
+  }
+  return cuerpo.filas;
+}
+
+async function cargarArchivo(archivo) {
+  const nombre = archivo.name.toLowerCase();
+  if (/\.(xlsx|xlsm|xls)$/.test(nombre)) procesarFilas(await leerExcel(archivo));
+  else if (nombre.endsWith(".pdf")) {
+    throw new Error("Los PDF todavía no son compatibles. Descarga el extracto en CSV o Excel.");
+  } else procesarTextoCSV(await leerTexto(archivo));
+}
+
 async function confirmarImportacion() {
   const elegidas = filasImportar.filter((f) => f.incluir);
   if (elegidas.length === 0) return;
@@ -531,7 +555,7 @@ inputCSV.addEventListener("change", async () => {
   if (!archivo) return;
   mostrarMensajeImportar("", false);
   try {
-    procesarTextoCSV(await leerTexto(archivo));
+    await cargarArchivo(archivo);
     detalleImportar.hidden = false;
   } catch (error) {
     cerrarImportacion();

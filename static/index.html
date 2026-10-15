@@ -70,9 +70,10 @@
     <section class="panel" aria-labelledby="titulo-importar">
       <div class="panel-cabecera">
         <h2 id="titulo-importar">Importar extracto</h2>
-        <button type="button" id="btn-elegir-csv" class="btn-secundario">Elegir archivo CSV</button>
-        <input type="file" id="archivo-csv" accept=".csv,text/csv,text/plain" hidden>
+        <button type="button" id="btn-elegir-csv" class="btn-secundario">Elegir archivo</button>
+        <input type="file" id="archivo-csv" accept=".csv,.xlsx,.xlsm,.xls,text/csv,text/plain" hidden>
       </div>
+      <p class="ayuda ayuda-fija">Acepta archivos CSV o Excel (.xlsx, .xls) descargados de tu banco.</p>
       <p id="msg-importar" class="mensaje" role="alert" hidden></p>
       <div id="importar-detalle" hidden>
         <p class="ayuda">Revisa que las columnas sean las correctas. Solo se importan los egresos; puedes desmarcar filas o cambiar su categoría.</p>

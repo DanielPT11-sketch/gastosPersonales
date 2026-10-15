@@ -2,8 +2,9 @@
 import math
 import os
 from collections import Counter
+from io import BytesIO
 from contextlib import closing
-from datetime import datetime
+from datetime import date, datetime
 
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -14,8 +15,10 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 # Los archivos de la carpeta 'static' se sirven en /static/...
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/static")
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # archivos de hasta 10 MB
 
 MAX_IMPORTAR = 5000
+MAX_FILAS_EXCEL = 20000
 
 init_db()
 
@@ -134,6 +137,96 @@ def importar_gastos():
                 importados += 1
 
     return jsonify({"importados": importados, "duplicados": duplicados, "invalidos": invalidos})
+
+
+def celda_excel(valor):
+    """Normaliza una celda: fechas a AAAA-MM-DD, números como número, el resto como texto."""
+    if valor is None:
+        return ""
+    if isinstance(valor, datetime):
+        return valor.date().isoformat()
+    if isinstance(valor, date):
+        return valor.isoformat()
+    if isinstance(valor, bool):
+        return str(valor)
+    if isinstance(valor, float):
+        if not math.isfinite(valor):
+            return ""
+        return int(valor) if valor.is_integer() else valor
+    if isinstance(valor, int):
+        return valor
+    return str(valor).strip()
+
+
+def filas_xlsx(contenido):
+    from openpyxl import load_workbook
+
+    libro = load_workbook(BytesIO(contenido), read_only=True, data_only=True)
+    try:
+        hojas = []
+        for hoja in libro.worksheets:
+            filas = []
+            for fila in hoja.iter_rows(values_only=True):
+                celdas = [celda_excel(v) for v in fila]
+                if any(c != "" for c in celdas):
+                    filas.append(celdas)
+                if len(filas) > MAX_FILAS_EXCEL:
+                    raise ValueError("Demasiadas filas")
+            hojas.append(filas)
+    finally:
+        libro.close()
+    return max(hojas, key=len) if hojas else []  # la hoja con más datos
+
+
+def filas_xls(contenido):
+    import xlrd
+
+    libro = xlrd.open_workbook(file_contents=contenido)
+    hojas = []
+    for hoja in libro.sheets():
+        filas = []
+        for r in range(min(hoja.nrows, MAX_FILAS_EXCEL)):
+            celdas = []
+            for c in hoja.row(r):
+                if c.ctype == xlrd.XL_CELL_DATE:
+                    try:
+                        celdas.append(xlrd.xldate_as_datetime(c.value, libro.datemode).date().isoformat())
+                    except ValueError:
+                        celdas.append("")
+                elif c.ctype == xlrd.XL_CELL_NUMBER:
+                    celdas.append(celda_excel(c.value))
+                elif c.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK, xlrd.XL_CELL_ERROR):
+                    celdas.append("")
+                else:
+                    celdas.append(str(c.value).strip())
+            if any(x != "" for x in celdas):
+                filas.append(celdas)
+        hojas.append(filas)
+    return max(hojas, key=len) if hojas else []
+
+
+@app.route("/api/gastos/importar/excel", methods=["POST"])
+def leer_excel():
+    """Lee un .xlsx/.xls y devuelve sus filas; la vista previa se arma en el navegador."""
+    archivo = request.files.get("archivo")
+    if archivo is None or not archivo.filename:
+        return jsonify({"error": "No se recibió ningún archivo."}), 400
+    nombre = archivo.filename.lower()
+    contenido = archivo.read()
+    try:
+        if nombre.endswith((".xlsx", ".xlsm")):
+            filas = filas_xlsx(contenido)
+        elif nombre.endswith(".xls"):
+            filas = filas_xls(contenido)
+        else:
+            return jsonify({"error": "Formato no compatible. Usa .xlsx, .xls o .csv."}), 400
+    except ImportError:
+        return jsonify({"error": "Falta instalar las librerías de Excel. Ejecuta: pip install -r requirements.txt"}), 500
+    except Exception:
+        return jsonify({"error": "No se pudo leer el Excel. Verifica que no esté dañado ni protegido con contraseña."}), 400
+    if not filas:
+        return jsonify({"error": "El archivo no tiene datos."}), 400
+    return jsonify({"filas": filas})
 
 
 @app.route("/api/gastos/<int:gasto_id>", methods=["DELETE"])
