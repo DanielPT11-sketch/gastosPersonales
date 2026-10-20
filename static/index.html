@@ -23,7 +23,12 @@
         <label for="hasta">Hasta</label>
         <input type="date" id="hasta">
       </div>
+      <div class="campo-rango">
+        <label for="filtro-banco">Banco</label>
+        <select id="filtro-banco"><option value="todos">Todos los bancos</option></select>
+      </div>
       <button type="button" id="btn-mes" class="btn-secundario">Este mes</button>
+      <button type="button" id="btn-anio" class="btn-secundario">Este año</button>
       <button type="button" id="btn-todo" class="btn-secundario">Ver todo</button>
     </section>
 
@@ -56,10 +61,16 @@
                  placeholder="Ej. Mercado de la semana" autocomplete="off" required>
         </div>
 
-        <div class="campo">
-          <label for="monto">Monto</label>
-          <input type="number" id="monto" name="monto" min="0.01" step="0.01"
-                 inputmode="decimal" placeholder="0" required>
+        <div class="fila">
+          <div class="campo">
+            <label for="monto">Monto</label>
+            <input type="number" id="monto" name="monto" min="0.01" step="0.01"
+                   inputmode="decimal" placeholder="0" required>
+          </div>
+          <div class="campo">
+            <label for="banco">Banco</label>
+            <select id="banco" name="banco"><option value="">Sin banco (efectivo)</option></select>
+          </div>
         </div>
 
         <p id="mensaje" class="mensaje" role="alert" hidden></p>
@@ -78,6 +89,8 @@
       <div id="importar-detalle" hidden>
         <p class="ayuda">Revisa que las columnas sean las correctas. Solo se importan los egresos; puedes desmarcar filas o cambiar su categoría.</p>
         <div class="fila-mapeo">
+          <div class="campo"><label for="banco-importar">Banco del extracto</label>
+            <select id="banco-importar"><option value="">Sin banco</option></select></div>
           <div class="campo"><label for="col-fecha">Columna de fecha</label><select id="col-fecha"></select></div>
           <div class="campo"><label for="col-concepto">Columna de concepto</label><select id="col-concepto"></select></div>
           <div class="campo"><label for="col-monto">Columna de monto</label><select id="col-monto"></select></div>
@@ -94,6 +107,7 @@
             </select>
           </div>
         </div>
+        <p class="ayuda">¿No ves tu banco? <button type="button" id="btn-crear-banco-importar" class="enlace">Créalo aquí</button>.</p>
         <p id="resumen-importar" class="resumen-detalle"></p>
         <ul id="lista-importar" class="lista lista-importar"></ul>
         <div class="acciones">
@@ -114,6 +128,20 @@
         <p id="vacio" class="vacio" hidden>No hay gastos en este período.</p>
       </div>
     </section>
+
+    <details class="panel" id="panel-bancos">
+      <summary>Mis bancos</summary>
+      <form id="form-banco" class="form-banco" novalidate>
+        <div class="campo">
+          <label for="nuevo-banco">Nombre del banco o cuenta</label>
+          <input type="text" id="nuevo-banco" maxlength="60" placeholder="Ej. Bancolombia ahorros" autocomplete="off">
+        </div>
+        <button type="submit" class="btn-secundario">Crear banco</button>
+      </form>
+      <p id="msg-banco" class="mensaje" role="alert" hidden></p>
+      <ul id="lista-bancos" class="lista"></ul>
+      <p id="vacio-bancos" class="vacio">Aún no has creado bancos.</p>
+    </details>
   </main>
 
   <script src="/static/js/main.js"></script>

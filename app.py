@@ -1,6 +1,7 @@
 """Servidor Flask y API REST del seguimiento de gastos."""
 import math
 import os
+import sqlite3
 from collections import Counter
 from io import BytesIO
 from contextlib import closing
@@ -32,7 +33,22 @@ def fila_a_dict(fila):
     return {k: fila[k] for k in fila.keys()}
 
 
-def validar_gasto(datos):
+def validar_banco_id(valor, ids_bancos):
+    """Devuelve (banco_id, error). None = sin banco."""
+    if valor is None or valor == "":
+        return None, None
+    if isinstance(valor, bool):
+        return None, "El banco no es válido."
+    try:
+        banco_id = int(valor)
+    except (TypeError, ValueError):
+        return None, "El banco no es válido."
+    if ids_bancos is not None and banco_id not in ids_bancos:
+        return None, "El banco indicado no existe."
+    return banco_id, None
+
+
+def validar_gasto(datos, ids_bancos=None):
     """Devuelve (gasto_limpio, error). Si hay error, gasto_limpio es None."""
     if not isinstance(datos, dict):
         return None, "El cuerpo debe ser un objeto JSON."
@@ -58,11 +74,16 @@ def validar_gasto(datos):
     if not math.isfinite(monto) or monto <= 0:
         return None, "El monto debe ser mayor que cero."
 
+    banco_id, error_banco = validar_banco_id(datos.get("banco_id"), ids_bancos)
+    if error_banco:
+        return None, error_banco
+
     return {
         "fecha": fecha,
         "concepto": concepto,
         "monto": monto,
         "categoria": categoria,
+        "banco_id": banco_id,
     }, None
 
 
@@ -70,33 +91,61 @@ def validar_gasto(datos):
 def listar_gastos():
     with closing(get_connection()) as conn:
         filas = conn.execute(
-            "SELECT id, fecha, concepto, monto, categoria "
-            "FROM gastos ORDER BY fecha DESC, id DESC"
+            "SELECT g.id, g.fecha, g.concepto, g.monto, g.categoria, g.banco_id, b.nombre AS banco "
+            "FROM gastos g LEFT JOIN bancos b ON b.id = g.banco_id "
+            "ORDER BY g.fecha DESC, g.id DESC"
         ).fetchall()
     return jsonify([fila_a_dict(f) for f in filas])
 
 
+def ids_bancos(conn):
+    return {f["id"] for f in conn.execute("SELECT id FROM bancos")}
+
+
+@app.route("/api/bancos", methods=["GET"])
+def listar_bancos():
+    with closing(get_connection()) as conn:
+        filas = conn.execute("SELECT id, nombre FROM bancos ORDER BY nombre COLLATE NOCASE").fetchall()
+    return jsonify([fila_a_dict(f) for f in filas])
+
+
+@app.route("/api/bancos", methods=["POST"])
+def crear_banco():
+    datos = request.get_json(silent=True)
+    nombre = " ".join(str(datos.get("nombre", "")).split()) if isinstance(datos, dict) else ""
+    if not nombre:
+        return jsonify({"error": "El nombre del banco es obligatorio."}), 400
+    if len(nombre) > 60:
+        return jsonify({"error": "El nombre es demasiado largo (máximo 60 caracteres)."}), 400
+    try:
+        with closing(get_connection()) as conn:
+            with conn:
+                cursor = conn.execute("INSERT INTO bancos (nombre) VALUES (?)", (nombre,))
+                nuevo_id = cursor.lastrowid
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "Ya existe un banco con ese nombre."}), 409
+    return jsonify({"id": nuevo_id, "nombre": nombre}), 201
+
+
 @app.route("/api/gastos", methods=["POST"])
 def crear_gasto():
-    gasto, error = validar_gasto(request.get_json(silent=True))
-    if error:
-        return jsonify({"error": error}), 400
-
     with closing(get_connection()) as conn:
+        gasto, error = validar_gasto(request.get_json(silent=True), ids_bancos(conn))
+        if error:
+            return jsonify({"error": error}), 400
         with conn:
             # Consulta parametrizada: evita inyección SQL
             cursor = conn.execute(
-                "INSERT INTO gastos (fecha, concepto, monto, categoria) "
-                "VALUES (?, ?, ?, ?)",
-                (gasto["fecha"], gasto["concepto"], gasto["monto"], gasto["categoria"]),
+                "INSERT INTO gastos (fecha, concepto, monto, categoria, banco_id) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (gasto["fecha"], gasto["concepto"], gasto["monto"], gasto["categoria"], gasto["banco_id"]),
             )
             nuevo_id = cursor.lastrowid
-
     return jsonify({"id": nuevo_id, **gasto}), 201
 
 
-def clave_gasto(fecha, concepto, monto):
-    return (fecha, str(concepto).strip().lower(), round(float(monto), 2))
+def clave_gasto(fecha, concepto, monto, banco_id):
+    return (fecha, str(concepto).strip().lower(), round(float(monto), 2), banco_id)
 
 
 @app.route("/api/gastos/importar", methods=["POST"])
@@ -107,32 +156,37 @@ def importar_gastos():
     if len(datos["gastos"]) > MAX_IMPORTAR:
         return jsonify({"error": f"Máximo {MAX_IMPORTAR} movimientos por importación."}), 400
 
-    validos, invalidos = [], 0
-    for item in datos["gastos"]:
-        gasto, error = validar_gasto(item)
-        if error:
-            invalidos += 1
-        else:
-            validos.append(gasto)
-
-    importados = duplicados = 0
+    importados = duplicados = invalidos = 0
     with closing(get_connection()) as conn:
+        # Todos los movimientos del archivo van al mismo banco (o a ninguno)
+        banco_id, error = validar_banco_id(datos.get("banco_id"), ids_bancos(conn))
+        if error:
+            return jsonify({"error": error}), 400
+
+        validos = []
+        for item in datos["gastos"]:
+            gasto, error = validar_gasto({**item, "banco_id": banco_id} if isinstance(item, dict) else item)
+            if error:
+                invalidos += 1
+            else:
+                validos.append(gasto)
+
         with conn:
-            # Se cuentan los gastos ya guardados: así dos compras idénticas del mismo
-            # día en el archivo se importan ambas, pero reimportar el archivo no duplica.
+            # Se cuentan los gastos ya guardados (del mismo banco): dos compras idénticas
+            # del mismo día en el archivo se importan ambas, pero reimportar no duplica.
             existentes = Counter(
-                clave_gasto(f["fecha"], f["concepto"], f["monto"])
-                for f in conn.execute("SELECT fecha, concepto, monto FROM gastos")
+                clave_gasto(f["fecha"], f["concepto"], f["monto"], f["banco_id"])
+                for f in conn.execute("SELECT fecha, concepto, monto, banco_id FROM gastos")
             )
             for g in validos:
-                clave = clave_gasto(g["fecha"], g["concepto"], g["monto"])
+                clave = clave_gasto(g["fecha"], g["concepto"], g["monto"], g["banco_id"])
                 if existentes[clave] > 0:
                     existentes[clave] -= 1
                     duplicados += 1
                     continue
                 conn.execute(
-                    "INSERT INTO gastos (fecha, concepto, monto, categoria) VALUES (?, ?, ?, ?)",
-                    (g["fecha"], g["concepto"], g["monto"], g["categoria"]),
+                    "INSERT INTO gastos (fecha, concepto, monto, categoria, banco_id) VALUES (?, ?, ?, ?, ?)",
+                    (g["fecha"], g["concepto"], g["monto"], g["categoria"], g["banco_id"]),
                 )
                 importados += 1
 

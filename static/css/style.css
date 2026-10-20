@@ -174,3 +174,16 @@ input[aria-invalid="true"] { border-color: var(--peligro); }
 @media (max-width: 480px) { .fila-mapeo { grid-template-columns: 1fr; } }
 
 .ayuda-fija { margin: 0.75rem 0 0; }
+
+/* Bancos */
+.campo-rango select { width: auto; padding: 0.4rem 0.6rem; }
+summary { cursor: pointer; font-weight: 600; font-size: 1.1rem; }
+details[open] > summary { margin-bottom: 1rem; }
+.form-banco { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; }
+.form-banco .campo { flex: 1 1 14rem; margin-bottom: 0; }
+#msg-banco { margin: 0.75rem 0 0; }
+#lista-bancos, #vacio-bancos { margin-top: 1rem; }
+.banco { display: flex; justify-content: space-between; gap: 1rem; padding: 0.6rem 0; border-top: 1px solid var(--linea); }
+.banco:first-child { border-top: 0; }
+.banco-detalle { color: var(--tinta-suave); font-size: 0.9rem; }
+.enlace { font: inherit; color: var(--acento); background: none; border: 0; padding: 0; text-decoration: underline; cursor: pointer; }

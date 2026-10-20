@@ -1,4 +1,5 @@
 const API_URL = "/api/gastos";
+const BANCOS_URL = "/api/bancos";
 
 // Cambia el código de moneda si lo necesitas (COP, USD, EUR, MXN...)
 const formatoMoneda = new Intl.NumberFormat("es-CO", {
@@ -25,6 +26,16 @@ const cantidadEl = document.getElementById("cantidad");
 const btnHistorial = document.getElementById("btn-historial");
 const contenidoHistorial = document.getElementById("contenido-historial");
 const botonEnviar = form.querySelector("button[type='submit']");
+const selectBanco = document.getElementById("banco");
+const filtroBanco = document.getElementById("filtro-banco");
+const btnAnio = document.getElementById("btn-anio");
+const panelBancos = document.getElementById("panel-bancos");
+const formBanco = document.getElementById("form-banco");
+const inputNuevoBanco = document.getElementById("nuevo-banco");
+const msgBanco = document.getElementById("msg-banco");
+const listaBancos = document.getElementById("lista-bancos");
+const vacioBancos = document.getElementById("vacio-bancos");
+let bancos = []; // bancos creados por la persona
 
 let gastos = [];              // todos los gastos que devuelve la API
 let historialVisible = false; // el historial empieza oculto
@@ -46,6 +57,12 @@ function ponerRangoDelMes() {
   inputHasta.value = aISO(new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0));
 }
 
+function ponerRangoDelAnio() {
+  const anio = new Date().getFullYear();
+  inputDesde.value = `${anio}-01-01`;
+  inputHasta.value = `${anio}-12-31`;
+}
+
 function mostrarError(texto) {
   mensaje.textContent = texto;
   mensaje.hidden = !texto;
@@ -60,12 +77,21 @@ function rangoInvalido() {
   return Boolean(inputDesde.value && inputHasta.value && inputDesde.value > inputHasta.value);
 }
 
+function coincideBanco(gasto, filtro) {
+  if (filtro === "todos") return true;
+  if (filtro === "ninguno") return gasto.banco_id == null;
+  return String(gasto.banco_id) === filtro;
+}
+
 function gastosDelPeriodo() {
   if (rangoInvalido()) return [];
   const desde = inputDesde.value; // vacío = sin límite
   const hasta = inputHasta.value;
   // Las fechas ISO (AAAA-MM-DD) se pueden comparar como texto
-  return gastos.filter((g) => (!desde || g.fecha >= desde) && (!hasta || g.fecha <= hasta));
+  const banco = filtroBanco.value;
+  return gastos.filter(
+    (g) => (!desde || g.fecha >= desde) && (!hasta || g.fecha <= hasta) && coincideBanco(g, banco)
+  );
 }
 
 function descripcionPeriodo() {
@@ -92,7 +118,7 @@ function crearItem(gasto) {
   concepto.textContent = gasto.concepto; // textContent evita inyectar HTML
   const meta = document.createElement("p");
   meta.className = "gasto-meta";
-  meta.textContent = `${gasto.categoria} · ${fechaLegible(gasto.fecha)}`;
+  meta.textContent = `${gasto.categoria} · ${fechaLegible(gasto.fecha)}${gasto.banco ? ` · ${gasto.banco}` : ""}`;
   info.append(concepto, meta);
 
   const monto = document.createElement("span");
@@ -110,12 +136,20 @@ function crearItem(gasto) {
   return li;
 }
 
+function frasesBanco() {
+  const v = filtroBanco.value;
+  if (v === "todos") return "";
+  if (v === "ninguno") return "sin banco";
+  const banco = bancos.find((b) => String(b.id) === v);
+  return banco ? `en ${banco.nombre}` : "";
+}
+
 function textoCantidad(n) {
   if (rangoInvalido()) return "La fecha «Desde» es posterior a «Hasta». Corrige el rango.";
-  const periodo = descripcionPeriodo();
-  if (n === 0) return periodo ? `Sin gastos ${periodo}` : "Sin gastos registrados";
+  const filtros = [descripcionPeriodo(), frasesBanco()].filter(Boolean).join(" ");
+  if (n === 0) return filtros ? `Sin gastos ${filtros}` : "Sin gastos registrados";
   const cantidad = `${n} ${n === 1 ? "gasto" : "gastos"}`;
-  return periodo ? `${cantidad} ${periodo}` : `${cantidad} en total`;
+  return filtros ? `${cantidad} ${filtros}` : `${cantidad} en total`;
 }
 
 function renderizar() {
@@ -142,6 +176,7 @@ async function cargarGastos() {
     if (!respuesta.ok) throw new Error();
     gastos = await respuesta.json();
     renderizar();
+    renderizarBancos();
   } catch {
     mostrarError("No se pudieron cargar los gastos. Verifica que el servidor esté activo.");
   }
@@ -170,6 +205,7 @@ async function agregarGasto(evento) {
         concepto,
         monto,
         categoria: selectCategoria.value,
+        banco_id: selectBanco.value ? Number(selectBanco.value) : null,
       }),
     });
     const datos = await respuesta.json();
@@ -179,6 +215,7 @@ async function agregarGasto(evento) {
     inputMonto.value = "";
     inputConcepto.focus();
     ampliarRango(inputFecha.value); // si cae fuera del rango, se amplía para que se vea
+    asegurarBancoVisible(selectBanco.value);
     await cargarGastos();
   } catch (error) {
     mostrarError(error.message || "No se pudo guardar el gasto.");
@@ -212,6 +249,8 @@ const resumenImportar = document.getElementById("resumen-importar");
 const listaImportar = document.getElementById("lista-importar");
 const btnConfirmarImportar = document.getElementById("btn-confirmar-importar");
 const btnCancelarImportar = document.getElementById("btn-cancelar-importar");
+const bancoImportar = document.getElementById("banco-importar");
+const btnCrearBancoImportar = document.getElementById("btn-crear-banco-importar");
 
 let datosCSV = null;       // { encabezados, filas } del archivo cargado
 let filasImportar = [];    // movimientos propuestos para importar
@@ -396,12 +435,16 @@ function procesarFilas(filas) {
   const hayNegativos = datos.some((f) => (parsearMonto(f[cols.monto] || "") ?? 0) < 0);
   modoMonto.value = hayNegativos ? "negativos" : "todos";
 
+  // Si ya se está viendo un banco concreto, el extracto se asigna a ese banco por defecto
+  const f = filtroBanco.value;
+  if (f !== "todos" && f !== "ninguno") bancoImportar.value = f;
+
   construirFilasImportar();
 }
 
 /* ---- Vista previa ---- */
-function claveGasto(fecha, concepto, monto) {
-  return `${fecha}|${String(concepto).trim().toLowerCase()}|${Number(monto).toFixed(2)}`;
+function claveGasto(fecha, concepto, monto, bancoId) {
+  return `${fecha}|${String(concepto).trim().toLowerCase()}|${Number(monto).toFixed(2)}|${bancoId ?? ""}`;
 }
 
 function construirFilasImportar() {
@@ -409,11 +452,12 @@ function construirFilasImportar() {
   const iF = +colFecha.value;
   const iC = +colConcepto.value;
   const iM = +colMonto.value;
+  const bancoSel = bancoImportar.value ? Number(bancoImportar.value) : null;
 
   // Gastos ya registrados (se cuentan para no marcar de más compras idénticas)
   const registrados = new Map();
   gastos.forEach((g) => {
-    const k = claveGasto(g.fecha, g.concepto, g.monto);
+    const k = claveGasto(g.fecha, g.concepto, g.monto, g.banco_id);
     registrados.set(k, (registrados.get(k) || 0) + 1);
   });
 
@@ -427,7 +471,7 @@ function construirFilasImportar() {
 
     const concepto = String(f[iC] ?? "").replace(/\s+/g, " ").trim().slice(0, 120) || "Sin descripción";
     const monto = Math.abs(valor);
-    const clave = claveGasto(fecha, concepto, monto);
+    const clave = claveGasto(fecha, concepto, monto, bancoSel);
     const duplicado = (registrados.get(clave) || 0) > 0;
     if (duplicado) registrados.set(clave, registrados.get(clave) - 1);
     filasImportar.push({
@@ -531,6 +575,7 @@ async function confirmarImportacion() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        banco_id: bancoImportar.value ? Number(bancoImportar.value) : null,
         gastos: elegidas.map(({ fecha, concepto, monto, categoria }) => ({ fecha, concepto, monto, categoria })),
       }),
     });
@@ -538,9 +583,11 @@ async function confirmarImportacion() {
     if (!respuesta.ok) throw new Error(datos.error || "No se pudo importar el archivo.");
 
     elegidas.forEach((f) => ampliarRango(f.fecha));
+    asegurarBancoVisible(bancoImportar.value);
+    const banco = bancos.find((x) => String(x.id) === bancoImportar.value);
     cerrarImportacion();
     await cargarGastos();
-    let texto = `Se importaron ${datos.importados} ${datos.importados === 1 ? "gasto" : "gastos"}.`;
+    let texto = `Se importaron ${datos.importados} ${datos.importados === 1 ? "gasto" : "gastos"}${banco ? ` en ${banco.nombre}` : ""}.`;
     if (datos.duplicados) texto += ` Se omitieron ${datos.duplicados} que ya estaban registrados.`;
     mostrarMensajeImportar(texto, false);
   } catch (error) {
@@ -564,11 +611,109 @@ inputCSV.addEventListener("change", async () => {
     inputCSV.value = ""; // permite volver a elegir el mismo archivo
   }
 });
-[colFecha, colConcepto, colMonto, formatoFechaCSV, modoMonto].forEach((el) =>
+[colFecha, colConcepto, colMonto, formatoFechaCSV, modoMonto, bancoImportar].forEach((el) =>
   el.addEventListener("change", construirFilasImportar)
 );
 btnConfirmarImportar.addEventListener("click", confirmarImportacion);
 btnCancelarImportar.addEventListener("click", () => { cerrarImportacion(); mostrarMensajeImportar("", false); });
+
+/* ============================ Bancos ============================ */
+function llenarSelectoresBanco() {
+  const llenar = (sel, iniciales) => {
+    const actual = sel.value;
+    sel.replaceChildren(...iniciales, ...bancos.map((b) => new Option(b.nombre, String(b.id))));
+    if (Array.from(sel.options).some((o) => o.value === actual)) sel.value = actual;
+  };
+  llenar(selectBanco, [new Option("Sin banco (efectivo)", "")]);
+  llenar(bancoImportar, [new Option("Sin banco", "")]);
+  llenar(filtroBanco, [new Option("Todos los bancos", "todos"), new Option("Sin banco", "ninguno")]);
+}
+
+// Si se está filtrando por otro banco, cambia el filtro para que se vea lo que se acaba de guardar
+function asegurarBancoVisible(bancoId) {
+  if (filtroBanco.value === "todos") return;
+  const destino = bancoId ? String(bancoId) : "ninguno";
+  if (filtroBanco.value !== destino) filtroBanco.value = destino;
+}
+
+function mostrarMensajeBanco(texto, esError) {
+  msgBanco.textContent = texto;
+  msgBanco.hidden = !texto;
+  msgBanco.classList.toggle("mensaje-ok", !esError);
+}
+
+function renderizarBancos() {
+  const conteo = new Map();
+  gastos.forEach((g) => conteo.set(g.banco_id ?? null, (conteo.get(g.banco_id ?? null) || 0) + 1));
+  const fila = (nombre, n) => {
+    const li = document.createElement("li");
+    li.className = "banco";
+    const a = document.createElement("span");
+    a.textContent = nombre;
+    const b = document.createElement("span");
+    b.className = "banco-detalle";
+    b.textContent = `${n} ${n === 1 ? "gasto" : "gastos"}`;
+    li.append(a, b);
+    return li;
+  };
+  const items = bancos.map((b) => fila(b.nombre, conteo.get(b.id) || 0));
+  if (conteo.get(null)) items.push(fila("Sin banco", conteo.get(null)));
+  listaBancos.replaceChildren(...items);
+  vacioBancos.hidden = bancos.length > 0;
+}
+
+async function cargarBancos() {
+  try {
+    const respuesta = await fetch(BANCOS_URL);
+    if (!respuesta.ok) throw new Error();
+    bancos = await respuesta.json();
+    llenarSelectoresBanco();
+    renderizarBancos();
+  } catch {
+    mostrarError("No se pudieron cargar los bancos. Reinicia el servidor con el app.py más reciente.");
+  }
+}
+
+async function crearBanco(evento) {
+  evento.preventDefault();
+  const nombre = inputNuevoBanco.value.trim();
+  if (!nombre) return mostrarMensajeBanco("Escribe el nombre del banco.", true);
+  try {
+    const respuesta = await fetch(BANCOS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nombre }),
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!respuesta.ok) {
+      throw new Error(datos.error || "No se pudo crear el banco. Reinicia el servidor con el app.py más reciente.");
+    }
+    bancos.push(datos);
+    bancos.sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+    llenarSelectoresBanco();
+    renderizarBancos();
+    inputNuevoBanco.value = "";
+    mostrarMensajeBanco(`Banco «${datos.nombre}» creado.`, false);
+    if (!detalleImportar.hidden) { // si se está importando, se usa de una vez
+      bancoImportar.value = String(datos.id);
+      construirFilasImportar();
+    }
+  } catch (error) {
+    mostrarMensajeBanco(error.message, true);
+  }
+}
+
+formBanco.addEventListener("submit", crearBanco);
+btnCrearBancoImportar.addEventListener("click", () => {
+  panelBancos.open = true;
+  panelBancos.scrollIntoView({ behavior: "smooth", block: "center" });
+  inputNuevoBanco.focus();
+});
+btnAnio.addEventListener("click", () => {
+  ponerRangoDelAnio();
+  renderizar();
+});
+filtroBanco.addEventListener("change", renderizar);
 
 inputFecha.value = hoy();
 ponerRangoDelMes();
@@ -588,4 +733,4 @@ btnHistorial.addEventListener("click", () => {
   historialVisible = !historialVisible;
   renderizar();
 });
-cargarGastos();
+cargarBancos().then(cargarGastos);
