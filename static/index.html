@@ -14,6 +14,14 @@
       <p id="cantidad" class="resumen-detalle">Sin gastos registrados</p>
     </header>
 
+    <section id="aviso-pendientes" class="aviso" aria-live="polite" hidden>
+      <p><strong id="texto-pendientes"></strong></p>
+      <div class="aviso-acciones">
+        <select id="asignar-banco" aria-label="Banco para asignar"></select>
+        <button type="button" id="btn-asignar-banco" class="btn-secundario">Asignar a este banco</button>
+      </div>
+    </section>
+
     <section class="rango" aria-label="Rango de fechas">
       <div class="campo-rango">
         <label for="desde">Desde</label>
@@ -42,16 +50,7 @@
           </div>
           <div class="campo">
             <label for="categoria">Categoría</label>
-            <select id="categoria" name="categoria" required>
-              <option value="Alimentación">Alimentación</option>
-              <option value="Transporte">Transporte</option>
-              <option value="Servicios">Servicios</option>
-              <option value="Vivienda">Vivienda</option>
-              <option value="Salud">Salud</option>
-              <option value="Ocio">Ocio</option>
-              <option value="Educación">Educación</option>
-              <option value="Otros">Otros</option>
-            </select>
+            <select id="categoria" name="categoria" required></select>
           </div>
         </div>
 
@@ -69,8 +68,13 @@
           </div>
           <div class="campo">
             <label for="banco">Banco</label>
-            <select id="banco" name="banco"><option value="">Sin banco (efectivo)</option></select>
+            <select id="banco" name="banco"><option value="" disabled selected>Primero crea un banco</option></select>
           </div>
+        </div>
+
+        <div class="campo" id="campo-descripcion" hidden>
+          <label for="descripcion">Descripción del retiro o avance (opcional)</label>
+          <input type="text" id="descripcion" maxlength="200" placeholder="Ej. Pago al proveedor, mercado en la plaza" autocomplete="off">
         </div>
 
         <p id="mensaje" class="mensaje" role="alert" hidden></p>
@@ -90,7 +94,7 @@
         <p class="ayuda">Revisa que las columnas sean las correctas. Solo se importan los egresos; puedes desmarcar filas o cambiar su categoría.</p>
         <div class="fila-mapeo">
           <div class="campo"><label for="banco-importar">Banco del extracto</label>
-            <select id="banco-importar"><option value="">Sin banco</option></select></div>
+            <select id="banco-importar"><option value="" disabled selected>Primero crea un banco</option></select></div>
           <div class="campo"><label for="col-fecha">Columna de fecha</label><select id="col-fecha"></select></div>
           <div class="campo"><label for="col-concepto">Columna de concepto</label><select id="col-concepto"></select></div>
           <div class="campo"><label for="col-monto">Columna de monto</label><select id="col-monto"></select></div>
@@ -124,7 +128,12 @@
                 aria-expanded="false" aria-controls="contenido-historial">Ver historial</button>
       </div>
       <div id="contenido-historial" hidden>
+        <div class="vistas" role="group" aria-label="Vista del historial">
+          <button type="button" id="vista-general" class="btn-vista" aria-pressed="true">General</button>
+          <button type="button" id="vista-banco" class="btn-vista" aria-pressed="false">Por banco</button>
+        </div>
         <ul id="lista-gastos" class="lista"></ul>
+        <div id="grupos-historial" hidden></div>
         <p id="vacio" class="vacio" hidden>No hay gastos en este período.</p>
       </div>
     </section>
@@ -141,6 +150,19 @@
       <p id="msg-banco" class="mensaje" role="alert" hidden></p>
       <ul id="lista-bancos" class="lista"></ul>
       <p id="vacio-bancos" class="vacio">Aún no has creado bancos.</p>
+    </details>
+
+    <details class="panel" id="panel-categorias">
+      <summary>Mis categorías</summary>
+      <form id="form-categoria" class="form-banco" novalidate>
+        <div class="campo">
+          <label for="nueva-categoria">Nueva categoría</label>
+          <input type="text" id="nueva-categoria" maxlength="40" placeholder="Ej. Mascotas" autocomplete="off">
+        </div>
+        <button type="submit" class="btn-secundario">Crear categoría</button>
+      </form>
+      <p id="msg-categoria" class="mensaje" role="alert" hidden></p>
+      <ul id="lista-categorias" class="lista"></ul>
     </details>
   </main>
 

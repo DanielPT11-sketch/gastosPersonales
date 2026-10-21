@@ -1,5 +1,7 @@
 const API_URL = "/api/gastos";
 const BANCOS_URL = "/api/bancos";
+const CATEGORIA_RETIROS = "Retiros y avances";
+const CATEGORIAS_URL = "/api/categorias";
 
 // Cambia el código de moneda si lo necesitas (COP, USD, EUR, MXN...)
 const formatoMoneda = new Intl.NumberFormat("es-CO", {
@@ -36,6 +38,21 @@ const msgBanco = document.getElementById("msg-banco");
 const listaBancos = document.getElementById("lista-bancos");
 const vacioBancos = document.getElementById("vacio-bancos");
 let bancos = []; // bancos creados por la persona
+let vistaHistorial = "general"; // "general" o "banco"
+const inputDescripcion = document.getElementById("descripcion");
+const campoDescripcion = document.getElementById("campo-descripcion");
+const avisoPendientes = document.getElementById("aviso-pendientes");
+const textoPendientes = document.getElementById("texto-pendientes");
+const asignarBanco = document.getElementById("asignar-banco");
+const btnAsignarBanco = document.getElementById("btn-asignar-banco");
+const btnVistaGeneral = document.getElementById("vista-general");
+const btnVistaBanco = document.getElementById("vista-banco");
+const gruposHistorial = document.getElementById("grupos-historial");
+const formCategoria = document.getElementById("form-categoria");
+const inputNuevaCategoria = document.getElementById("nueva-categoria");
+const msgCategoria = document.getElementById("msg-categoria");
+const listaCategorias = document.getElementById("lista-categorias");
+let categorias = []; // [{ id, nombre, protegida }]
 
 let gastos = [];              // todos los gastos que devuelve la API
 let historialVisible = false; // el historial empieza oculto
@@ -108,6 +125,78 @@ function ampliarRango(fecha) {
   if (inputHasta.value && fecha > inputHasta.value) inputHasta.value = fecha;
 }
 
+function crearEditorDescripcion(gasto) {
+  const f = document.createElement("form");
+  f.className = "editor-descripcion";
+  f.hidden = true;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.maxLength = 200;
+  input.value = gasto.descripcion || "";
+  input.placeholder = "¿En qué se usó este dinero?";
+  input.setAttribute("aria-label", `Descripción de: ${gasto.concepto}`);
+  const guardar = document.createElement("button");
+  guardar.type = "submit";
+  guardar.className = "btn-secundario";
+  guardar.textContent = "Guardar";
+  const cancelar = document.createElement("button");
+  cancelar.type = "button";
+  cancelar.className = "enlace";
+  cancelar.textContent = "Cancelar";
+  cancelar.addEventListener("click", () => { f.hidden = true; input.value = gasto.descripcion || ""; });
+  f.addEventListener("submit", (e) => { e.preventDefault(); guardarDescripcion(gasto.id, input.value.trim()); });
+  f.append(input, guardar, cancelar);
+  return f;
+}
+
+async function actualizarGasto(id, cambios) {
+  mostrarError("");
+  try {
+    const respuesta = await fetch(`${API_URL}/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cambios),
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!respuesta.ok) {
+      throw new Error(datos.error || "No se pudo guardar el cambio. Reinicia el servidor con el app.py más reciente.");
+    }
+    await cargarGastos();
+  } catch (error) {
+    mostrarError(error.message);
+  }
+}
+
+const guardarDescripcion = (id, descripcion) => actualizarGasto(id, { descripcion });
+
+function crearEditorCategoria(gasto) {
+  const f = document.createElement("form");
+  f.className = "editor-descripcion";
+  f.hidden = true;
+  const sel = document.createElement("select");
+  sel.setAttribute("aria-label", `Categoría de: ${gasto.concepto}`);
+  const nombres = categorias.map((c) => c.nombre);
+  if (!nombres.includes(gasto.categoria)) nombres.push(gasto.categoria);
+  sel.replaceChildren(...nombres.map((n) => new Option(n, n)));
+  sel.value = gasto.categoria;
+  const guardar = document.createElement("button");
+  guardar.type = "submit";
+  guardar.className = "btn-secundario";
+  guardar.textContent = "Guardar";
+  const cancelar = document.createElement("button");
+  cancelar.type = "button";
+  cancelar.className = "enlace";
+  cancelar.textContent = "Cancelar";
+  cancelar.addEventListener("click", () => { f.hidden = true; sel.value = gasto.categoria; });
+  f.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (sel.value === gasto.categoria) { f.hidden = true; return; }
+    actualizarGasto(gasto.id, { categoria: sel.value });
+  });
+  f.append(sel, guardar, cancelar);
+  return f;
+}
+
 function crearItem(gasto) {
   const li = document.createElement("li");
   li.className = "gasto";
@@ -121,6 +210,37 @@ function crearItem(gasto) {
   meta.textContent = `${gasto.categoria} · ${fechaLegible(gasto.fecha)}${gasto.banco ? ` · ${gasto.banco}` : ""}`;
   info.append(concepto, meta);
 
+  const esRetiro = gasto.categoria === CATEGORIA_RETIROS;
+  if (esRetiro && gasto.descripcion) {
+    const desc = document.createElement("p");
+    desc.className = "gasto-descripcion";
+    desc.textContent = gasto.descripcion;
+    info.append(desc);
+  }
+
+  // Acciones del gasto: cada una abre su propio editor debajo
+  const acciones = document.createElement("div");
+  acciones.className = "gasto-acciones";
+  const editores = [];
+  const agregarAccion = (texto, editor) => {
+    const boton = document.createElement("button");
+    boton.type = "button";
+    boton.className = "enlace";
+    boton.textContent = texto;
+    boton.addEventListener("click", () => {
+      editor.hidden = !editor.hidden;
+      if (!editor.hidden) editor.querySelector("input, select").focus();
+    });
+    acciones.append(boton);
+    editores.push(editor);
+  };
+  agregarAccion("Cambiar categoría", crearEditorCategoria(gasto));
+  // Los retiros y avances pueden llevar una descripción (qué se hizo con el dinero)
+  if (esRetiro) {
+    agregarAccion(gasto.descripcion ? "Editar descripción" : "Agregar descripción", crearEditorDescripcion(gasto));
+  }
+  info.append(acciones);
+
   const monto = document.createElement("span");
   monto.className = "gasto-monto";
   monto.textContent = formatoMoneda.format(gasto.monto);
@@ -132,7 +252,7 @@ function crearItem(gasto) {
   eliminar.setAttribute("aria-label", `Eliminar gasto: ${gasto.concepto}`);
   eliminar.addEventListener("click", () => eliminarGasto(gasto.id));
 
-  li.append(info, monto, eliminar);
+  li.append(info, monto, eliminar, ...editores);
   return li;
 }
 
@@ -152,6 +272,48 @@ function textoCantidad(n) {
   return filtros ? `${cantidad} ${filtros}` : `${cantidad} en total`;
 }
 
+function renderizarHistorial(visibles) {
+  const porBanco = vistaHistorial === "banco";
+  lista.hidden = porBanco;
+  gruposHistorial.hidden = !porBanco;
+  btnVistaGeneral.setAttribute("aria-pressed", String(!porBanco));
+  btnVistaBanco.setAttribute("aria-pressed", String(porBanco));
+  if (!porBanco) {
+    lista.replaceChildren(...visibles.map(crearItem));
+    gruposHistorial.replaceChildren();
+    return;
+  }
+  lista.replaceChildren();
+  const grupos = new Map();
+  visibles.forEach((g) => {
+    const k = g.banco_id ?? null;
+    if (!grupos.has(k)) grupos.set(k, []);
+    grupos.get(k).push(g);
+  });
+  const orden = [...bancos.map((b) => b.id), null].filter((k) => grupos.has(k));
+  gruposHistorial.replaceChildren(
+    ...orden.map((k) => {
+      const items = grupos.get(k);
+      const total = items.reduce((s, g) => s + g.monto, 0);
+      const seccion = document.createElement("section");
+      seccion.className = "grupo-banco";
+      const cabecera = document.createElement("div");
+      cabecera.className = "grupo-cabecera";
+      const titulo = document.createElement("h3");
+      titulo.textContent = k === null ? "Sin banco asignado" : bancos.find((b) => b.id === k)?.nombre ?? "Banco";
+      const resumen = document.createElement("span");
+      resumen.className = "grupo-total";
+      resumen.textContent = `${items.length} ${items.length === 1 ? "gasto" : "gastos"} · ${formatoMoneda.format(total)}`;
+      cabecera.append(titulo, resumen);
+      const ul = document.createElement("ul");
+      ul.className = "lista";
+      ul.append(...items.map(crearItem));
+      seccion.append(cabecera, ul);
+      return seccion;
+    })
+  );
+}
+
 function renderizar() {
   const visibles = gastosDelPeriodo();
 
@@ -161,7 +323,7 @@ function renderizar() {
   cantidadEl.textContent = textoCantidad(visibles.length);
 
   // Historial (solo se ve si la persona lo pide)
-  lista.replaceChildren(...visibles.map(crearItem));
+  renderizarHistorial(visibles);
   vacio.hidden = visibles.length > 0;
   contenidoHistorial.hidden = !historialVisible;
   btnHistorial.setAttribute("aria-expanded", String(historialVisible));
@@ -175,8 +337,10 @@ async function cargarGastos() {
     const respuesta = await fetch(API_URL);
     if (!respuesta.ok) throw new Error();
     gastos = await respuesta.json();
+    llenarSelectoresBanco();
     renderizar();
     renderizarBancos();
+    renderizarCategorias();
   } catch {
     mostrarError("No se pudieron cargar los gastos. Verifica que el servidor esté activo.");
   }
@@ -191,6 +355,10 @@ async function agregarGasto(evento) {
 
   if (!inputFecha.value) return mostrarError("Elige una fecha.");
   if (!concepto) return mostrarError("Escribe un concepto.");
+  if (!selectBanco.value) {
+    if (bancos.length === 0) abrirPanelBancos();
+    return mostrarError(bancos.length ? "Elige el banco del gasto." : "Primero crea un banco en «Mis bancos».");
+  }
   if (!Number.isFinite(monto) || monto <= 0) {
     return mostrarError("Ingresa un monto mayor que cero.");
   }
@@ -205,7 +373,8 @@ async function agregarGasto(evento) {
         concepto,
         monto,
         categoria: selectCategoria.value,
-        banco_id: selectBanco.value ? Number(selectBanco.value) : null,
+        banco_id: Number(selectBanco.value),
+        descripcion: selectCategoria.value === CATEGORIA_RETIROS ? inputDescripcion.value.trim() : "",
       }),
     });
     const datos = await respuesta.json();
@@ -213,6 +382,7 @@ async function agregarGasto(evento) {
 
     inputConcepto.value = "";
     inputMonto.value = "";
+    inputDescripcion.value = "";
     inputConcepto.focus();
     ampliarRango(inputFecha.value); // si cae fuera del rango, se amplía para que se vea
     asegurarBancoVisible(selectBanco.value);
@@ -257,6 +427,7 @@ let filasImportar = [];    // movimientos propuestos para importar
 let omitidasImportar = 0;  // ingresos o filas no válidas
 
 const REGLAS_CATEGORIA = [
+  ["Retiros y avances", ["retiro", "retiros", "avance", "avances", "cajero"]],
   ["Alimentación", ["rappi", "exito", "carulla", "jumbo", "olimpica", "d1", "ara", "restaurante", "mercado", "supermercado", "panaderia", "cafe", "pizza", "mcdonalds", "kfc", "frisby", "corral", "domicilio", "tienda"]],
   ["Transporte", ["uber", "didi", "cabify", "indriver", "beat", "gasolina", "terpel", "primax", "peaje", "parqueadero", "taxi", "transmilenio", "metro", "sitp"]],
   ["Servicios", ["epm", "claro", "movistar", "tigo", "wom", "etb", "vanti", "enel", "codensa", "acueducto", "energia", "internet", "celular"]],
@@ -276,7 +447,9 @@ function normalizar(texto) {
 function categoriaSugerida(concepto) {
   const t = normalizar(concepto);
   const regla = REGLAS_CATEGORIA.find(([, re]) => re.test(t));
-  return regla ? regla[0] : "Otros";
+  const sugerida = regla ? regla[0] : "Otros";
+  // Si esa categoría ya no existe (la quitaste), se usa "Otros"
+  return categorias.some((c) => c.nombre === sugerida) ? sugerida : "Otros";
 }
 
 function mostrarMensajeImportar(texto, esError) {
@@ -436,8 +609,10 @@ function procesarFilas(filas) {
   modoMonto.value = hayNegativos ? "negativos" : "todos";
 
   // Si ya se está viendo un banco concreto, el extracto se asigna a ese banco por defecto
+  // Se pide elegir el banco en cada extracto (así no se asigna al banco equivocado por costumbre)
   const f = filtroBanco.value;
   if (f !== "todos" && f !== "ninguno") bancoImportar.value = f;
+  else bancoImportar.value = bancos.length === 1 ? String(bancos[0].id) : "";
 
   construirFilasImportar();
 }
@@ -475,7 +650,7 @@ function construirFilasImportar() {
     const duplicado = (registrados.get(clave) || 0) > 0;
     if (duplicado) registrados.set(clave, registrados.get(clave) - 1);
     filasImportar.push({
-      incluir: !duplicado, fecha, concepto, monto, duplicado,
+      incluir: !duplicado, fecha, concepto, monto, duplicado, descripcion: "",
       categoria: categoriaSugerida(concepto),
     });
   }
@@ -509,9 +684,21 @@ function crearFilaImportar(fila) {
   categoria.setAttribute("aria-label", `Categoría de ${fila.concepto}`);
   categoria.replaceChildren(...Array.from(selectCategoria.options, (o) => new Option(o.text, o.value)));
   categoria.value = fila.categoria;
-  categoria.addEventListener("change", () => { fila.categoria = categoria.value; });
+  const desc = document.createElement("input");
+  desc.type = "text";
+  desc.maxLength = 200;
+  desc.className = "desc-importar";
+  desc.placeholder = "Descripción del retiro o avance (opcional)";
+  desc.setAttribute("aria-label", `Descripción de: ${fila.concepto}`);
+  desc.value = fila.descripcion;
+  desc.hidden = fila.categoria !== CATEGORIA_RETIROS;
+  desc.addEventListener("input", () => { fila.descripcion = desc.value; });
+  categoria.addEventListener("change", () => {
+    fila.categoria = categoria.value;
+    desc.hidden = fila.categoria !== CATEGORIA_RETIROS;
+  });
 
-  li.append(check, info, monto, categoria);
+  li.append(check, info, monto, categoria, desc);
   return li;
 }
 
@@ -522,8 +709,11 @@ function actualizarResumenImportar() {
   const partes = [`Se importarán ${elegidas.length} ${elegidas.length === 1 ? "gasto" : "gastos"} por ${formatoMoneda.format(total)}.`];
   if (ya) partes.push(`Ya registrados: ${ya}.`);
   if (omitidasImportar) partes.push(`Omitidas (ingresos o filas no válidas): ${omitidasImportar}.`);
+  if (!bancoImportar.value) {
+    partes.push(bancos.length ? "Elige el banco del extracto para poder importar." : "Crea un banco para poder importar.");
+  }
   resumenImportar.textContent = partes.join(" ");
-  btnConfirmarImportar.disabled = elegidas.length === 0;
+  btnConfirmarImportar.disabled = elegidas.length === 0 || !bancoImportar.value;
 }
 
 function renderizarImportar() {
@@ -568,7 +758,7 @@ async function cargarArchivo(archivo) {
 
 async function confirmarImportacion() {
   const elegidas = filasImportar.filter((f) => f.incluir);
-  if (elegidas.length === 0) return;
+  if (elegidas.length === 0 || !bancoImportar.value) return;
   btnConfirmarImportar.disabled = true;
   try {
     const respuesta = await fetch(`${API_URL}/importar`, {
@@ -576,7 +766,10 @@ async function confirmarImportacion() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         banco_id: bancoImportar.value ? Number(bancoImportar.value) : null,
-        gastos: elegidas.map(({ fecha, concepto, monto, categoria }) => ({ fecha, concepto, monto, categoria })),
+        gastos: elegidas.map(({ fecha, concepto, monto, categoria, descripcion }) => ({
+          fecha, concepto, monto, categoria,
+          descripcion: categoria === CATEGORIA_RETIROS ? descripcion.trim() : "",
+        })),
       }),
     });
     const datos = await respuesta.json();
@@ -619,21 +812,73 @@ btnCancelarImportar.addEventListener("click", () => { cerrarImportacion(); mostr
 
 /* ============================ Bancos ============================ */
 function llenarSelectoresBanco() {
-  const llenar = (sel, iniciales) => {
+  const hayPendientes = gastos.some((g) => g.banco_id == null);
+  const f = filtroBanco.value;
+  const preferido = f !== "todos" && f !== "ninguno" ? f : "";
+  const existe = (v) => v !== "" && bancos.some((b) => String(b.id) === v);
+
+  // Selectores donde elegir un banco es obligatorio
+  [selectBanco, bancoImportar].forEach((sel) => {
     const actual = sel.value;
-    sel.replaceChildren(...iniciales, ...bancos.map((b) => new Option(b.nombre, String(b.id))));
-    if (Array.from(sel.options).some((o) => o.value === actual)) sel.value = actual;
-  };
-  llenar(selectBanco, [new Option("Sin banco (efectivo)", "")]);
-  llenar(bancoImportar, [new Option("Sin banco", "")]);
-  llenar(filtroBanco, [new Option("Todos los bancos", "todos"), new Option("Sin banco", "ninguno")]);
+    const marcador = new Option(bancos.length ? "Elige un banco" : "Primero crea un banco", "");
+    marcador.disabled = true;
+    sel.replaceChildren(marcador, ...bancos.map((b) => new Option(b.nombre, String(b.id))));
+    if (existe(actual)) sel.value = actual;
+    else if (bancos.length === 1) sel.value = String(bancos[0].id);
+    else if (existe(preferido)) sel.value = preferido;
+    else sel.value = "";
+  });
+
+  // Filtro: "Sin banco asignado" solo aparece mientras queden gastos antiguos sin banco
+  const iniciales = [new Option("Todos los bancos", "todos")];
+  if (hayPendientes) iniciales.push(new Option("Sin banco asignado", "ninguno"));
+  filtroBanco.replaceChildren(...iniciales, ...bancos.map((b) => new Option(b.nombre, String(b.id))));
+  if (Array.from(filtroBanco.options).some((o) => o.value === f)) filtroBanco.value = f;
 }
 
 // Si se está filtrando por otro banco, cambia el filtro para que se vea lo que se acaba de guardar
 function asegurarBancoVisible(bancoId) {
-  if (filtroBanco.value === "todos") return;
-  const destino = bancoId ? String(bancoId) : "ninguno";
-  if (filtroBanco.value !== destino) filtroBanco.value = destino;
+  if (filtroBanco.value === "todos" || !bancoId) return;
+  if (filtroBanco.value !== String(bancoId)) filtroBanco.value = String(bancoId);
+}
+
+function renderizarPendientes() {
+  const n = gastos.filter((g) => g.banco_id == null).length;
+  avisoPendientes.hidden = n === 0;
+  if (n === 0) return;
+  textoPendientes.textContent = `Tienes ${n} ${n === 1 ? "gasto" : "gastos"} sin banco. Todos los gastos deben tener uno.`;
+  const actual = asignarBanco.value;
+  const marcador = new Option(bancos.length ? "Elige un banco" : "Primero crea un banco", "");
+  marcador.disabled = true;
+  asignarBanco.replaceChildren(marcador, ...bancos.map((b) => new Option(b.nombre, String(b.id))));
+  const valido = bancos.some((b) => String(b.id) === actual);
+  asignarBanco.value = valido ? actual : bancos.length === 1 ? String(bancos[0].id) : "";
+}
+
+async function asignarPendientes() {
+  if (!asignarBanco.value) {
+    if (bancos.length === 0) abrirPanelBancos();
+    return mostrarError(bancos.length ? "Elige un banco para asignar." : "Primero crea un banco en «Mis bancos».");
+  }
+  mostrarError("");
+  try {
+    const respuesta = await fetch(`${API_URL}/asignar-banco`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ banco_id: Number(asignarBanco.value) }),
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!respuesta.ok) throw new Error(datos.error || "No se pudieron asignar los gastos.");
+    await cargarGastos();
+  } catch (error) {
+    mostrarError(error.message);
+  }
+}
+
+function abrirPanelBancos() {
+  panelBancos.open = true;
+  panelBancos.scrollIntoView({ behavior: "smooth", block: "center" });
+  inputNuevoBanco.focus();
 }
 
 function mostrarMensajeBanco(texto, esError) {
@@ -657,9 +902,10 @@ function renderizarBancos() {
     return li;
   };
   const items = bancos.map((b) => fila(b.nombre, conteo.get(b.id) || 0));
-  if (conteo.get(null)) items.push(fila("Sin banco", conteo.get(null)));
+  if (conteo.get(null)) items.push(fila("Sin banco asignado", conteo.get(null)));
   listaBancos.replaceChildren(...items);
   vacioBancos.hidden = bancos.length > 0;
+  renderizarPendientes();
 }
 
 async function cargarBancos() {
@@ -704,16 +950,159 @@ async function crearBanco(evento) {
 }
 
 formBanco.addEventListener("submit", crearBanco);
-btnCrearBancoImportar.addEventListener("click", () => {
-  panelBancos.open = true;
-  panelBancos.scrollIntoView({ behavior: "smooth", block: "center" });
-  inputNuevoBanco.focus();
+btnCrearBancoImportar.addEventListener("click", abrirPanelBancos);
+btnAsignarBanco.addEventListener("click", asignarPendientes);
+selectCategoria.addEventListener("change", () => {
+  campoDescripcion.hidden = selectCategoria.value !== CATEGORIA_RETIROS;
 });
+btnVistaGeneral.addEventListener("click", () => { vistaHistorial = "general"; renderizar(); });
+btnVistaBanco.addEventListener("click", () => { vistaHistorial = "banco"; renderizar(); });
 btnAnio.addEventListener("click", () => {
   ponerRangoDelAnio();
   renderizar();
 });
 filtroBanco.addEventListener("change", renderizar);
+
+/* =========================== Categorías =========================== */
+function mostrarMensajeCategoria(texto, esError) {
+  msgCategoria.textContent = texto;
+  msgCategoria.hidden = !texto;
+  msgCategoria.classList.toggle("mensaje-ok", !esError);
+}
+
+function llenarSelectorCategoria() {
+  const actual = selectCategoria.value;
+  selectCategoria.replaceChildren(...categorias.map((c) => new Option(c.nombre, c.nombre)));
+  selectCategoria.value = categorias.some((c) => c.nombre === actual) ? actual : (categorias[0]?.nombre ?? "");
+  campoDescripcion.hidden = selectCategoria.value !== CATEGORIA_RETIROS;
+}
+
+function crearFilaCategoria(c, n) {
+  const li = document.createElement("li");
+  li.className = "banco";
+  const nombre = document.createElement("span");
+  nombre.textContent = c.nombre;
+  const detalle = document.createElement("span");
+  detalle.className = "banco-detalle";
+  detalle.textContent = `${n} ${n === 1 ? "gasto" : "gastos"}`;
+  const acciones = document.createElement("div");
+  acciones.className = "banco-acciones";
+  acciones.append(detalle);
+  li.append(nombre, acciones);
+
+  if (c.protegida) {
+    const fija = document.createElement("span");
+    fija.className = "banco-detalle";
+    fija.textContent = "Fija";
+    fija.title = "Esta categoría no se puede quitar";
+    acciones.append(fija);
+    return li;
+  }
+
+  const quitar = document.createElement("button");
+  quitar.type = "button";
+  quitar.className = "btn-eliminar";
+  quitar.textContent = "Quitar";
+  quitar.setAttribute("aria-label", `Quitar la categoría ${c.nombre}`);
+  acciones.append(quitar);
+
+  if (n === 0) { // sin gastos: se quita de una vez
+    quitar.addEventListener("click", () => quitarCategoria(c, null));
+    return li;
+  }
+
+  // Con gastos: primero se elige a qué categoría moverlos
+  const form = document.createElement("form");
+  form.className = "editor-descripcion";
+  form.hidden = true;
+  const etiqueta = document.createElement("span");
+  etiqueta.textContent = `Mover sus ${n} ${n === 1 ? "gasto" : "gastos"} a:`;
+  const destino = document.createElement("select");
+  destino.setAttribute("aria-label", `Categoría de destino para los gastos de ${c.nombre}`);
+  const otras = categorias.filter((x) => x.id !== c.id);
+  destino.replaceChildren(...otras.map((x) => new Option(x.nombre, String(x.id))));
+  const respaldo = otras.find((x) => x.nombre === "Otros");
+  if (respaldo) destino.value = String(respaldo.id);
+  const confirmar = document.createElement("button");
+  confirmar.type = "submit";
+  confirmar.className = "btn-secundario";
+  confirmar.textContent = "Quitar y mover";
+  const cancelar = document.createElement("button");
+  cancelar.type = "button";
+  cancelar.className = "enlace";
+  cancelar.textContent = "Cancelar";
+  quitar.addEventListener("click", () => { form.hidden = !form.hidden; });
+  cancelar.addEventListener("click", () => { form.hidden = true; });
+  form.addEventListener("submit", (e) => { e.preventDefault(); quitarCategoria(c, Number(destino.value)); });
+  form.append(etiqueta, destino, confirmar, cancelar);
+  li.append(form);
+  return li;
+}
+
+function renderizarCategorias() {
+  const conteo = new Map();
+  gastos.forEach((g) => {
+    const k = String(g.categoria).toLowerCase();
+    conteo.set(k, (conteo.get(k) || 0) + 1);
+  });
+  listaCategorias.replaceChildren(
+    ...categorias.map((c) => crearFilaCategoria(c, conteo.get(c.nombre.toLowerCase()) || 0))
+  );
+}
+
+async function cargarCategorias() {
+  try {
+    const respuesta = await fetch(CATEGORIAS_URL);
+    if (!respuesta.ok) throw new Error();
+    categorias = await respuesta.json();
+    llenarSelectorCategoria();
+    renderizarCategorias();
+  } catch {
+    mostrarError("No se pudieron cargar las categorías. Reinicia el servidor con el app.py más reciente.");
+  }
+}
+
+async function crearCategoria(evento) {
+  evento.preventDefault();
+  const nombre = inputNuevaCategoria.value.trim();
+  if (!nombre) return mostrarMensajeCategoria("Escribe el nombre de la categoría.", true);
+  try {
+    const respuesta = await fetch(CATEGORIAS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nombre }),
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!respuesta.ok) {
+      throw new Error(datos.error || "No se pudo crear la categoría. Reinicia el servidor con el app.py más reciente.");
+    }
+    await cargarCategorias();
+    inputNuevaCategoria.value = "";
+    mostrarMensajeCategoria(`Categoría «${datos.nombre}» creada.`, false);
+  } catch (error) {
+    mostrarMensajeCategoria(error.message, true);
+  }
+}
+
+async function quitarCategoria(categoria, destinoId) {
+  mostrarMensajeCategoria("", false);
+  try {
+    const url = destinoId ? `${CATEGORIAS_URL}/${categoria.id}?reasignar=${destinoId}` : `${CATEGORIAS_URL}/${categoria.id}`;
+    const respuesta = await fetch(url, { method: "DELETE" });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!respuesta.ok) {
+      throw new Error(datos.error || "No se pudo quitar la categoría. Reinicia el servidor con el app.py más reciente.");
+    }
+    await cargarCategorias();
+    await cargarGastos();
+    const movidos = datos.movidos ? ` Se movieron ${datos.movidos} ${datos.movidos === 1 ? "gasto" : "gastos"}.` : "";
+    mostrarMensajeCategoria(`Categoría «${categoria.nombre}» quitada.${movidos}`, false);
+  } catch (error) {
+    mostrarMensajeCategoria(error.message, true);
+  }
+}
+
+formCategoria.addEventListener("submit", crearCategoria);
 
 inputFecha.value = hoy();
 ponerRangoDelMes();
@@ -733,4 +1122,4 @@ btnHistorial.addEventListener("click", () => {
   historialVisible = !historialVisible;
   renderizar();
 });
-cargarBancos().then(cargarGastos);
+Promise.all([cargarBancos(), cargarCategorias()]).then(cargarGastos);

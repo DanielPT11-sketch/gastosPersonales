@@ -187,3 +187,32 @@ details[open] > summary { margin-bottom: 1rem; }
 .banco:first-child { border-top: 0; }
 .banco-detalle { color: var(--tinta-suave); font-size: 0.9rem; }
 .enlace { font: inherit; color: var(--acento); background: none; border: 0; padding: 0; text-decoration: underline; cursor: pointer; }
+
+/* Reglas de banco, descripciones y vista por banco */
+.aviso { background: #fff6dc; border: 1px solid #e3c36a; border-radius: var(--radio); padding: 1rem 1.25rem; }
+.aviso p { margin: 0 0 0.75rem; }
+.aviso-acciones { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.aviso-acciones select { width: auto; }
+.vistas { display: inline-flex; border: 1px solid var(--acento); border-radius: 8px; overflow: hidden; margin-bottom: 1rem; }
+.btn-vista { font: inherit; font-size: 0.9rem; font-weight: 600; color: var(--acento); background: transparent; border: 0; padding: 0.4rem 1rem; cursor: pointer; }
+.btn-vista[aria-pressed="true"] { background: var(--acento); color: #fff; }
+.grupo-banco + .grupo-banco { margin-top: 1.25rem; }
+.grupo-cabecera { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; padding-bottom: 0.4rem; border-bottom: 2px solid var(--linea); }
+.grupo-cabecera h3 { margin: 0; font-size: 1rem; }
+.grupo-total { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 0.95rem; }
+.grupo-banco .lista .gasto:first-child { padding-top: 0.8rem; }
+.gasto-descripcion { margin: 0.2rem 0 0; font-size: 0.9rem; font-style: italic; overflow-wrap: anywhere; }
+.editor-descripcion { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.editor-descripcion[hidden] { display: none; }
+.editor-descripcion input { flex: 1 1 14rem; width: auto; }
+.fila-importar .desc-importar { grid-column: 2 / -1; font-size: 0.85rem; padding: 0.35rem 0.5rem; }
+
+/* Categorías */
+.gasto-acciones { display: flex; flex-wrap: wrap; gap: 0.9rem; margin-top: 0.2rem; }
+.gasto-acciones .enlace { font-size: 0.85rem; }
+.editor-descripcion select { flex: 1 1 12rem; width: auto; }
+.banco { flex-wrap: wrap; align-items: center; }
+.banco-acciones { display: flex; gap: 0.75rem; align-items: center; }
+.banco .editor-descripcion { flex-basis: 100%; }
+#msg-categoria { margin: 0.75rem 0 0; }
+#lista-categorias { margin-top: 1rem; }

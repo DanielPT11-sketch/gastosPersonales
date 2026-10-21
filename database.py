@@ -3,6 +3,11 @@ import os
 import sqlite3
 from contextlib import closing
 
+CATEGORIAS_BASE = ["Alimentación", "Transporte", "Servicios", "Vivienda", "Salud",
+                   "Ocio", "Educación", "Retiros y avances", "Otros"]
+# Estas dos no se pueden quitar: "Retiros y avances" lleva descripción y "Otros" es la de respaldo
+CATEGORIAS_FIJAS = ("Otros", "Retiros y avances")
+
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gastos.db")
 
 
@@ -33,7 +38,8 @@ def init_db():
                     concepto  TEXT NOT NULL,
                     monto     REAL NOT NULL,
                     categoria TEXT NOT NULL,
-                    banco_id  INTEGER REFERENCES bancos(id)
+                    banco_id  INTEGER REFERENCES bancos(id),
+                    descripcion TEXT
                 )
                 """
             )
@@ -42,3 +48,24 @@ def init_db():
             columnas = [f["name"] for f in conn.execute("PRAGMA table_info(gastos)")]
             if "banco_id" not in columnas:
                 conn.execute("ALTER TABLE gastos ADD COLUMN banco_id INTEGER REFERENCES bancos(id)")
+            if "descripcion" not in columnas:
+                conn.execute("ALTER TABLE gastos ADD COLUMN descripcion TEXT")
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS categorias (
+                    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+                    nombre TEXT NOT NULL UNIQUE COLLATE NOCASE
+                )
+                """
+            )
+            if conn.execute("SELECT COUNT(*) FROM categorias").fetchone()[0] == 0:
+                conn.executemany("INSERT OR IGNORE INTO categorias (nombre) VALUES (?)",
+                                 [(n,) for n in CATEGORIAS_BASE])
+            # Categorías que los gastos existentes ya usan (para no dejar ninguna huérfana)
+            conn.execute(
+                "INSERT OR IGNORE INTO categorias (nombre) "
+                "SELECT DISTINCT TRIM(categoria) FROM gastos WHERE TRIM(COALESCE(categoria, '')) <> ''"
+            )
+            conn.executemany("INSERT OR IGNORE INTO categorias (nombre) VALUES (?)",
+                             [(n,) for n in CATEGORIAS_FIJAS])
