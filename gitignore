@@ -1,0 +1,9 @@
+# Entornos virtuales y archivos generados
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Datos personales y claves: NUNCA subir a un repositorio
+gastos.db
+.secret_key
