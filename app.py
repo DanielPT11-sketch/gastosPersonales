@@ -85,7 +85,7 @@ def angular_fallback(ruta):
 
 
 # ============================== Cuentas y sesión ==============================
-USUARIO_RE = re.compile(r"^[A-Za-z0-9._-]{3,30}$")
+USUARIO_RE = re.compile(r"^[A-Za-z0-9._@+-]{3,60}$")  # admite correos como usuario
 MIN_PASSWORD = 8
 MAX_PASSWORD = 128
 MAX_FALLOS = 5
@@ -93,6 +93,47 @@ BLOQUEO_SEGUNDOS = 300
 intentos = {}  # (ip, usuario) -> (fallos seguidos, bloqueado hasta)
 # Se compara contra este hash cuando el usuario no existe, para que tarde lo mismo
 HASH_FALSO = generate_password_hash(secrets.token_hex(8))
+
+
+# Palabras que vuelven débil una contraseña aunque sea larga
+DEBILES = ("password", "contraseña", "contrasena", "qwerty", "123456", "abcdef", "admin", "iloveyou", "colombia", "p@ssw0rd", "passw0rd")
+
+
+def _tiene_secuencia(texto):
+    """¿Hay 4 o más caracteres seguidos en orden (1234, abcd, 4321)?"""
+    asc = desc = 1
+    for anterior, actual in zip(texto, texto[1:]):
+        d = ord(actual) - ord(anterior)
+        asc = asc + 1 if d == 1 else 1
+        desc = desc + 1 if d == -1 else 1
+        if asc >= 4 or desc >= 4:
+            return True
+    return False
+
+
+def evaluar_password(password, usuario=""):
+    """Devuelve 'baja', 'media' o 'alta'. Debe dar lo mismo que seguridad.ts (la que ve la persona)."""
+    caracteres = list(password)
+    largo = len(caracteres)
+    minusculas = password.lower()
+    clases = sum([
+        any(c.lower() == c and c.upper() != c for c in caracteres),  # minúsculas
+        any(c.upper() == c and c.lower() != c for c in caracteres),  # mayúsculas
+        any("0" <= c <= "9" for c in caracteres),                    # números
+        any(c.lower() == c.upper() and not ("0" <= c <= "9") for c in caracteres),  # símbolos y espacios
+    ])
+    nombres = [n.lower() for n in {usuario, usuario.split("@")[0]} if len(n) >= 3]
+    es_debil = (
+        largo < 8
+        or any(p in minusculas for p in DEBILES)
+        or len(set(caracteres)) <= 3
+        or _tiene_secuencia(minusculas)
+        or any(n in minusculas for n in nombres)
+    )
+    if es_debil:
+        return "baja"
+    puntos = (largo >= 8) + (largo >= 12) + (largo >= 16) + max(clases - 1, 0)
+    return "alta" if puntos >= 5 else "media" if puntos >= 3 else "baja"
 
 
 def segundos_de_bloqueo(clave):
@@ -155,11 +196,13 @@ def registro():
     usuario = str(datos.get("usuario", "")).strip()
     password = str(datos.get("password", ""))
     if not USUARIO_RE.match(usuario):
-        return jsonify({"error": "El usuario debe tener de 3 a 30 caracteres: letras, números, punto, guion o guion bajo."}), 400
+        return jsonify({"error": "El usuario debe tener de 3 a 60 caracteres: letras, números y los símbolos . _ - @ +"}), 400
     if len(password) < MIN_PASSWORD:
         return jsonify({"error": f"La contraseña debe tener al menos {MIN_PASSWORD} caracteres."}), 400
     if len(password) > MAX_PASSWORD:
         return jsonify({"error": f"La contraseña es demasiado larga (máximo {MAX_PASSWORD} caracteres)."}), 400
+    if evaluar_password(password, usuario) == "baja":
+        return jsonify({"error": "La contraseña es demasiado débil. Usa 8 o más caracteres, combina mayúsculas, minúsculas, números o símbolos, y evita secuencias como 1234."}), 400
     try:
         with closing(get_connection()) as conn:
             with conn:
