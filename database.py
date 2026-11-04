@@ -5,8 +5,11 @@ from contextlib import closing
 
 CATEGORIAS_BASE = ["Alimentación", "Transporte", "Servicios", "Vivienda", "Salud",
                    "Ocio", "Educación", "Retiros y avances", "Otros"]
-# Estas dos no se pueden quitar: "Retiros y avances" lleva descripción y "Otros" es la de respaldo
-CATEGORIAS_FIJAS = ("Otros", "Retiros y avances")
+INGRESOS_BASE = ["Salario", "Ventas", "Intereses", "Reembolsos", "Otros ingresos"]
+BASE_POR_TIPO = {"gasto": CATEGORIAS_BASE, "ingreso": INGRESOS_BASE}
+# Estas no se pueden quitar: "Retiros y avances" lleva descripción y "Otros"/"Otros ingresos" son las de respaldo
+FIJAS_POR_TIPO = {"gasto": ("Otros", "Retiros y avances"), "ingreso": ("Otros ingresos",)}
+CATEGORIAS_FIJAS = tuple(n for fijas in FIJAS_POR_TIPO.values() for n in fijas)
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gastos.db")
 
@@ -22,7 +25,7 @@ def _columnas(conn, tabla):
     return [f["name"] for f in conn.execute(f"PRAGMA table_info({tabla})")]
 
 
-def _tabla_nombres_por_usuario(conn, tabla):
+def _tabla_nombres_por_usuario(conn, tabla, extra=""):
     """bancos y categorias: el nombre es único POR USUARIO (dos cuentas pueden tener 'Efectivo').
     En bases antiguas el nombre era único para todos, así que se reconstruye la tabla
     (procedimiento recomendado por SQLite: crear nueva, copiar, borrar la vieja, renombrar)."""
@@ -30,7 +33,7 @@ def _tabla_nombres_por_usuario(conn, tabla):
         CREATE TABLE {{nombre}} (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             usuario_id INTEGER REFERENCES usuarios(id),
-            nombre     TEXT NOT NULL COLLATE NOCASE,
+            nombre     TEXT NOT NULL COLLATE NOCASE,{extra}
             UNIQUE (usuario_id, nombre)
         )"""
     existe = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
@@ -67,7 +70,8 @@ def init_db():
                     categoria   TEXT NOT NULL,
                     banco_id    INTEGER REFERENCES bancos(id),
                     descripcion TEXT,
-                    usuario_id  INTEGER REFERENCES usuarios(id)
+                    usuario_id  INTEGER REFERENCES usuarios(id),
+                    tipo        TEXT NOT NULL DEFAULT 'gasto'
                 )
                 """
             )
@@ -78,11 +82,26 @@ def init_db():
                 conn.execute("ALTER TABLE gastos ADD COLUMN descripcion TEXT")
             if "usuario_id" not in columnas:
                 conn.execute("ALTER TABLE gastos ADD COLUMN usuario_id INTEGER REFERENCES usuarios(id)")
+            if "tipo" not in columnas:  # todo lo anterior eran gastos
+                conn.execute("ALTER TABLE gastos ADD COLUMN tipo TEXT NOT NULL DEFAULT 'gasto'")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_gastos_usuario ON gastos (usuario_id, fecha)")
 
             _tabla_nombres_por_usuario(conn, "bancos")
-            _tabla_nombres_por_usuario(conn, "categorias")
+            _tabla_nombres_por_usuario(conn, "categorias", extra="\n            tipo       TEXT NOT NULL DEFAULT 'gasto',")
+            if "tipo" not in _columnas(conn, "categorias"):
+                conn.execute("ALTER TABLE categorias ADD COLUMN tipo TEXT NOT NULL DEFAULT 'gasto'")
+            _asegurar_categorias_ingreso(conn)
     # Los datos anteriores a las cuentas (usuario_id vacío) pasan a la primera cuenta que se cree.
+
+
+def _asegurar_categorias_ingreso(conn):
+    """Las cuentas que ya existían reciben las categorías de ingresos (y la fija 'Otros ingresos')."""
+    for u in conn.execute("SELECT id FROM usuarios").fetchall():
+        hay = conn.execute(
+            "SELECT 1 FROM categorias WHERE usuario_id = ? AND tipo = 'ingreso' LIMIT 1", (u["id"],)
+        ).fetchone()
+        for nombre in (FIJAS_POR_TIPO["ingreso"] if hay else INGRESOS_BASE):
+            conn.execute("INSERT OR IGNORE INTO categorias (usuario_id, nombre, tipo) VALUES (?, ?, 'ingreso')", (u["id"], nombre))
 
 
 def crear_usuario(conn, usuario, password_hash):
@@ -96,16 +115,17 @@ def crear_usuario(conn, usuario, password_hash):
         for tabla in ("bancos", "categorias", "gastos"):
             conn.execute(f"UPDATE {tabla} SET usuario_id = ? WHERE usuario_id IS NULL", (uid,))
 
-    # Categorías que sus gastos ya usan (por si vienen de una base muy antigua)
+    # Categorías que sus movimientos ya usan (por si vienen de una base muy antigua)
     conn.execute(
-        "INSERT OR IGNORE INTO categorias (usuario_id, nombre) "
-        "SELECT DISTINCT ?, TRIM(categoria) FROM gastos "
+        "INSERT OR IGNORE INTO categorias (usuario_id, nombre, tipo) "
+        "SELECT DISTINCT ?, TRIM(categoria), tipo FROM gastos "
         "WHERE usuario_id = ? AND TRIM(COALESCE(categoria, '')) <> ''",
         (uid, uid),
     )
-    tiene = {f["nombre"].lower() for f in conn.execute("SELECT nombre FROM categorias WHERE usuario_id = ?", (uid,))}
-    base = CATEGORIAS_BASE if not tiene else CATEGORIAS_FIJAS  # cuenta nueva: todas; con datos: solo las fijas
-    for nombre in base:
-        if nombre.lower() not in tiene:
-            conn.execute("INSERT INTO categorias (usuario_id, nombre) VALUES (?, ?)", (uid, nombre))
+    for tipo, base in BASE_POR_TIPO.items():  # cuenta nueva: todas las base; con datos: solo las fijas
+        tiene = {f["nombre"].lower() for f in conn.execute(
+            "SELECT nombre FROM categorias WHERE usuario_id = ? AND tipo = ?", (uid, tipo))}
+        for nombre in (base if not tiene else FIJAS_POR_TIPO[tipo]):
+            if nombre.lower() not in tiene:
+                conn.execute("INSERT OR IGNORE INTO categorias (usuario_id, nombre, tipo) VALUES (?, ?, ?)", (uid, nombre, tipo))
     return uid

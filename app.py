@@ -57,6 +57,7 @@ app.config.update(
 MAX_IMPORTAR = 5000
 MAX_FILAS_EXCEL = 20000
 MAX_DESCRIPCION = 200
+TIPOS = ("gasto", "ingreso")
 
 init_db()
 
@@ -273,6 +274,9 @@ def validar_gasto(datos, ids_bancos=None, categorias=None):
     fecha = str(datos.get("fecha", "")).strip()
     concepto = str(datos.get("concepto", "")).strip()
     categoria = str(datos.get("categoria", "")).strip()
+    tipo = str(datos.get("tipo") or "gasto").strip().lower()
+    if tipo not in TIPOS:
+        return None, "El tipo debe ser «gasto» o «ingreso»."
 
     try:
         datetime.strptime(fecha, "%Y-%m-%d")
@@ -283,10 +287,14 @@ def validar_gasto(datos, ids_bancos=None, categorias=None):
         return None, "El concepto es obligatorio."
     if not categoria:
         return None, "La categoría es obligatoria."
-    if categorias is not None:  # debe ser una categoría existente (se usa su escritura oficial)
-        categoria = categorias.get(categoria.lower())
-        if categoria is None:
+    if categorias is not None:  # debe existir y ser del mismo tipo (se usa su escritura oficial)
+        info = categorias.get(categoria.lower())
+        if info is None:
             return None, "La categoría no existe."
+        categoria, tipo_categoria = info
+        if tipo_categoria != tipo:
+            de = lambda t: "ingresos" if t == "ingreso" else "gastos"
+            return None, f"La categoría «{categoria}» es de {de(tipo_categoria)}, no de {de(tipo)}."
 
     try:
         monto = float(datos.get("monto"))
@@ -312,6 +320,7 @@ def validar_gasto(datos, ids_bancos=None, categorias=None):
         "categoria": categoria,
         "banco_id": banco_id,
         "descripcion": descripcion or None,
+        "tipo": tipo,
     }, None
 
 
@@ -320,10 +329,10 @@ def ids_bancos(conn, usuario_id):
 
 
 def nombres_categoria(conn, usuario_id):
-    """{'alimentación': 'Alimentación', ...} de ESTA cuenta, para validar sin importar mayúsculas."""
+    """{'alimentación': ('Alimentación', 'gasto'), ...} de ESTA cuenta, para validar sin importar mayúsculas."""
     return {
-        f["nombre"].lower(): f["nombre"]
-        for f in conn.execute("SELECT nombre FROM categorias WHERE usuario_id = ?", (usuario_id,))
+        f["nombre"].lower(): (f["nombre"], f["tipo"])
+        for f in conn.execute("SELECT nombre, tipo FROM categorias WHERE usuario_id = ?", (usuario_id,))
     }
 
 
@@ -333,12 +342,13 @@ def nombres_categoria(conn, usuario_id):
 def listar_categorias():
     with closing(get_connection()) as conn:
         filas = conn.execute(
-            "SELECT id, nombre FROM categorias WHERE usuario_id = ? "
-            "ORDER BY (nombre = 'Otros' COLLATE NOCASE), nombre COLLATE NOCASE",
+            "SELECT id, nombre, tipo FROM categorias WHERE usuario_id = ? "
+            "ORDER BY tipo, (nombre = 'Otros' COLLATE NOCASE OR nombre = 'Otros ingresos' COLLATE NOCASE), "
+            "nombre COLLATE NOCASE",
             (uid(),),
         ).fetchall()
     return jsonify([
-        {"id": f["id"], "nombre": f["nombre"], "protegida": f["nombre"].lower() in FIJAS_MIN}
+        {"id": f["id"], "nombre": f["nombre"], "tipo": f["tipo"], "protegida": f["nombre"].lower() in FIJAS_MIN}
         for f in filas
     ])
 
@@ -347,7 +357,11 @@ def listar_categorias():
 @login_requerido
 def crear_categoria():
     datos = request.get_json(silent=True)
-    nombre = " ".join(str(datos.get("nombre", "")).split()) if isinstance(datos, dict) else ""
+    es_dict = isinstance(datos, dict)
+    nombre = " ".join(str(datos.get("nombre", "")).split()) if es_dict else ""
+    tipo = str(datos.get("tipo") or "gasto").strip().lower() if es_dict else "gasto"
+    if tipo not in TIPOS:
+        return jsonify({"error": "El tipo debe ser «gasto» o «ingreso»."}), 400
     if not nombre:
         return jsonify({"error": "El nombre de la categoría es obligatorio."}), 400
     if len(nombre) > 40:
@@ -358,22 +372,23 @@ def crear_categoria():
                 return jsonify({"error": "Ya existe una categoría con ese nombre."}), 409
             with conn:
                 cursor = conn.execute(
-                    "INSERT INTO categorias (usuario_id, nombre) VALUES (?, ?)", (uid(), nombre)
+                    "INSERT INTO categorias (usuario_id, nombre, tipo) VALUES (?, ?, ?)", (uid(), nombre, tipo)
                 )
                 nuevo_id = cursor.lastrowid
     except sqlite3.IntegrityError:
         return jsonify({"error": "Ya existe una categoría con ese nombre."}), 409
-    return jsonify({"id": nuevo_id, "nombre": nombre, "protegida": False}), 201
+    return jsonify({"id": nuevo_id, "nombre": nombre, "tipo": tipo, "protegida": False}), 201
 
 
 @app.route("/api/categorias/<int:categoria_id>", methods=["DELETE"])
 @login_requerido
 def eliminar_categoria(categoria_id):
-    """Quita una categoría. Si tiene gastos, hay que indicar a cuál moverlos (?reasignar=id)."""
+    """Quita una categoría. Si tiene movimientos, hay que indicar a cuál moverlos (?reasignar=id),
+    y debe ser del mismo tipo (los gastos van a una categoría de gastos, los ingresos a una de ingresos)."""
     destino_id = request.args.get("reasignar", type=int)
     with closing(get_connection()) as conn:
         fila = conn.execute(
-            "SELECT id, nombre FROM categorias WHERE id = ? AND usuario_id = ?", (categoria_id, uid())
+            "SELECT id, nombre, tipo FROM categorias WHERE id = ? AND usuario_id = ?", (categoria_id, uid())
         ).fetchone()
         if fila is None:
             return jsonify({"error": "Categoría no encontrada."}), 404
@@ -387,14 +402,16 @@ def eliminar_categoria(categoria_id):
         if usados:
             if destino_id is None or destino_id == categoria_id:
                 return jsonify({
-                    "error": f"Hay {usados} {'gasto' if usados == 1 else 'gastos'} en esta categoría. Elige a cuál categoría moverlos.",
+                    "error": f"Hay {usados} {'movimiento' if usados == 1 else 'movimientos'} en esta categoría. Elige a cuál categoría moverlos.",
                     "gastos": usados,
                 }), 409
             destino = conn.execute(
-                "SELECT nombre FROM categorias WHERE id = ? AND usuario_id = ?", (destino_id, uid())
+                "SELECT nombre, tipo FROM categorias WHERE id = ? AND usuario_id = ?", (destino_id, uid())
             ).fetchone()
             if destino is None:
                 return jsonify({"error": "La categoría de destino no existe."}), 400
+            if destino["tipo"] != fila["tipo"]:
+                return jsonify({"error": "La categoría de destino debe ser del mismo tipo (gastos con gastos, ingresos con ingresos)."}), 400
         with conn:
             if usados:
                 conn.execute(
@@ -435,14 +452,16 @@ def crear_banco():
     return jsonify({"id": nuevo_id, "nombre": nombre}), 201
 
 
-# ============================== Gastos ==============================
+# ====================== Movimientos (gastos e ingresos) ======================
+# La tabla y las rutas se llaman "gastos" por historia: cada fila es un movimiento con 'tipo'
+# 'gasto' o 'ingreso'. El monto siempre es positivo; el tipo dice si resta o suma al balance.
 @app.route("/api/gastos", methods=["GET"])
 @login_requerido
 def listar_gastos():
     with closing(get_connection()) as conn:
         filas = conn.execute(
-            "SELECT g.id, g.fecha, g.concepto, g.monto, g.categoria, g.descripcion, g.banco_id, b.nombre AS banco "
-            "FROM gastos g LEFT JOIN bancos b ON b.id = g.banco_id "
+            "SELECT g.id, g.fecha, g.concepto, g.monto, g.tipo, g.categoria, g.descripcion, g.banco_id, "
+            "b.nombre AS banco FROM gastos g LEFT JOIN bancos b ON b.id = g.banco_id "
             "WHERE g.usuario_id = ? ORDER BY g.fecha DESC, g.id DESC",
             (uid(),),
         ).fetchall()
@@ -461,17 +480,17 @@ def crear_gasto():
         with conn:
             # Consulta parametrizada: evita inyección SQL
             cursor = conn.execute(
-                "INSERT INTO gastos (usuario_id, fecha, concepto, monto, categoria, banco_id, descripcion) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO gastos (usuario_id, fecha, concepto, monto, categoria, banco_id, descripcion, tipo) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (uid(), gasto["fecha"], gasto["concepto"], gasto["monto"], gasto["categoria"],
-                 gasto["banco_id"], gasto["descripcion"]),
+                 gasto["banco_id"], gasto["descripcion"], gasto["tipo"]),
             )
             nuevo_id = cursor.lastrowid
     return jsonify({"id": nuevo_id, **gasto}), 201
 
 
-def clave_gasto(fecha, concepto, monto, banco_id):
-    return (fecha, str(concepto).strip().lower(), round(float(monto), 2), banco_id)
+def clave_gasto(fecha, concepto, monto, banco_id, tipo):
+    return (fecha, str(concepto).strip().lower(), round(float(monto), 2), banco_id, tipo)
 
 
 @app.route("/api/gastos/importar", methods=["POST"])
@@ -504,24 +523,25 @@ def importar_gastos():
                 validos.append(gasto)
 
         with conn:
-            # Se cuentan los gastos ya guardados (del mismo banco): dos compras idénticas
+            # Se cuentan los movimientos ya guardados (mismo banco y mismo tipo): dos compras idénticas
             # del mismo día en el archivo se importan ambas, pero reimportar no duplica.
             existentes = Counter(
-                clave_gasto(f["fecha"], f["concepto"], f["monto"], f["banco_id"])
+                clave_gasto(f["fecha"], f["concepto"], f["monto"], f["banco_id"], f["tipo"])
                 for f in conn.execute(
-                    "SELECT fecha, concepto, monto, banco_id FROM gastos WHERE usuario_id = ?", (uid(),)
+                    "SELECT fecha, concepto, monto, banco_id, tipo FROM gastos WHERE usuario_id = ?", (uid(),)
                 )
             )
             for g in validos:
-                clave = clave_gasto(g["fecha"], g["concepto"], g["monto"], g["banco_id"])
+                clave = clave_gasto(g["fecha"], g["concepto"], g["monto"], g["banco_id"], g["tipo"])
                 if existentes[clave] > 0:
                     existentes[clave] -= 1
                     duplicados += 1
                     continue
                 conn.execute(
-                    "INSERT INTO gastos (usuario_id, fecha, concepto, monto, categoria, banco_id, descripcion) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (uid(), g["fecha"], g["concepto"], g["monto"], g["categoria"], g["banco_id"], g["descripcion"]),
+                    "INSERT INTO gastos (usuario_id, fecha, concepto, monto, categoria, banco_id, descripcion, tipo) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (uid(), g["fecha"], g["concepto"], g["monto"], g["categoria"], g["banco_id"],
+                     g["descripcion"], g["tipo"]),
                 )
                 importados += 1
 
@@ -622,18 +642,25 @@ def leer_excel():
 @app.route("/api/gastos/<int:gasto_id>", methods=["PATCH"])
 @login_requerido
 def actualizar_gasto(gasto_id):
-    """Edita la categoría y/o la descripción de un gasto."""
+    """Edita la categoría y/o la descripción de un movimiento (la categoría debe ser de su mismo tipo)."""
     datos = request.get_json(silent=True)
     if not isinstance(datos, dict) or not ({"categoria", "descripcion"} & datos.keys()):
         return jsonify({"error": "Solo se puede actualizar la categoría o la descripción."}), 400
     campos, valores = [], []
     with closing(get_connection()) as conn:
         if "categoria" in datos:
-            categoria = nombres_categoria(conn, uid()).get(str(datos.get("categoria") or "").strip().lower())
-            if categoria is None:
+            actual = conn.execute(
+                "SELECT tipo FROM gastos WHERE id = ? AND usuario_id = ?", (gasto_id, uid())
+            ).fetchone()
+            if actual is None:
+                return jsonify({"error": "Movimiento no encontrado."}), 404
+            info = nombres_categoria(conn, uid()).get(str(datos.get("categoria") or "").strip().lower())
+            if info is None:
                 return jsonify({"error": "La categoría no existe."}), 400
+            if info[1] != actual["tipo"]:
+                return jsonify({"error": "Esa categoría no corresponde al tipo de este movimiento."}), 400
             campos.append("categoria = ?")
-            valores.append(categoria)
+            valores.append(info[0])
         if "descripcion" in datos:
             descripcion = " ".join(str(datos.get("descripcion") or "").split())
             if len(descripcion) > MAX_DESCRIPCION:
@@ -646,8 +673,8 @@ def actualizar_gasto(gasto_id):
                 (*valores, gasto_id, uid()),
             )
         if cursor.rowcount == 0:
-            return jsonify({"error": "Gasto no encontrado."}), 404
-        fila = conn.execute("SELECT id, categoria, descripcion FROM gastos WHERE id = ?", (gasto_id,)).fetchone()
+            return jsonify({"error": "Movimiento no encontrado."}), 404
+        fila = conn.execute("SELECT id, categoria, descripcion, tipo FROM gastos WHERE id = ?", (gasto_id,)).fetchone()
     return jsonify(fila_a_dict(fila))
 
 
@@ -676,8 +703,8 @@ def eliminar_gasto(gasto_id):
         with conn:
             cursor = conn.execute("DELETE FROM gastos WHERE id = ? AND usuario_id = ?", (gasto_id, uid()))
     if cursor.rowcount == 0:
-        return jsonify({"error": "Gasto no encontrado."}), 404
-    return jsonify({"mensaje": "Gasto eliminado.", "id": gasto_id})
+        return jsonify({"error": "Movimiento no encontrado."}), 404
+    return jsonify({"mensaje": "Movimiento eliminado.", "id": gasto_id})
 
 
 if __name__ == "__main__":
