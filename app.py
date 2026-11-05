@@ -423,33 +423,117 @@ def eliminar_categoria(categoria_id):
 
 
 # ============================== Bancos ==============================
+TIPOS_BANCO = {"ahorros": "Ahorros", "corriente": "Corriente", "credito": "Crédito"}
+NUMERO_CUENTA_RE = re.compile(r"^[0-9A-Za-z]{4,30}$")
+
+
+def etiqueta_banco(nombre, tipo, numero):
+    """«Bancolombia · Ahorros ••1234»: así se muestra el banco en listas y selectores
+    (el número completo solo se ve al editar el banco)."""
+    texto = nombre
+    if tipo in TIPOS_BANCO:
+        texto += f" · {TIPOS_BANCO[tipo]}"
+    if numero:
+        texto += f" ••{numero[-4:]}"
+    return texto
+
+
+def banco_a_dict(fila):
+    return {
+        "id": fila["id"],
+        "nombre": fila["nombre"],
+        "tipo": fila["tipo"],
+        "numero_cuenta": fila["numero_cuenta"],
+        "etiqueta": etiqueta_banco(fila["nombre"], fila["tipo"], fila["numero_cuenta"]),
+    }
+
+
+def validar_banco(datos, parcial=False):
+    """Devuelve (campos_limpios, error). Con parcial=True solo se validan los campos que vengan."""
+    campos = {}
+    if not parcial or "nombre" in datos:
+        nombre = " ".join(str(datos.get("nombre", "")).split())
+        if not nombre:
+            return None, "El nombre del banco es obligatorio."
+        if len(nombre) > 60:
+            return None, "El nombre es demasiado largo (máximo 60 caracteres)."
+        campos["nombre"] = nombre
+    if not parcial or "tipo" in datos:
+        tipo = str(datos.get("tipo") or "").strip().lower()
+        if tipo not in TIPOS_BANCO:
+            return None, "Elige el tipo de cuenta: ahorros, corriente o crédito."
+        campos["tipo"] = tipo
+    if "numero_cuenta" in datos:  # es opcional (por ejemplo, un banco para el efectivo no lo tiene)
+        numero = re.sub(r"[\s-]", "", str(datos.get("numero_cuenta") or ""))
+        if numero and not NUMERO_CUENTA_RE.match(numero):
+            return None, "El número de cuenta debe tener entre 4 y 30 letras o números (sin símbolos)."
+        campos["numero_cuenta"] = numero
+    elif not parcial:
+        campos["numero_cuenta"] = ""
+    return campos, None
+
+
+MENSAJE_BANCO_REPETIDO = "Ya tienes un banco con ese nombre, ese tipo de cuenta y ese número."
+
+
 @app.route("/api/bancos", methods=["GET"])
 @login_requerido
 def listar_bancos():
     with closing(get_connection()) as conn:
         filas = conn.execute(
-            "SELECT id, nombre FROM bancos WHERE usuario_id = ? ORDER BY nombre COLLATE NOCASE", (uid(),)
+            "SELECT id, nombre, tipo, numero_cuenta FROM bancos WHERE usuario_id = ? "
+            "ORDER BY nombre COLLATE NOCASE, tipo, numero_cuenta",
+            (uid(),),
         ).fetchall()
-    return jsonify([fila_a_dict(f) for f in filas])
+    return jsonify([banco_a_dict(f) for f in filas])
 
 
 @app.route("/api/bancos", methods=["POST"])
 @login_requerido
 def crear_banco():
     datos = request.get_json(silent=True)
-    nombre = " ".join(str(datos.get("nombre", "")).split()) if isinstance(datos, dict) else ""
-    if not nombre:
-        return jsonify({"error": "El nombre del banco es obligatorio."}), 400
-    if len(nombre) > 60:
-        return jsonify({"error": "El nombre es demasiado largo (máximo 60 caracteres)."}), 400
+    campos, error = validar_banco(datos if isinstance(datos, dict) else {})
+    if error:
+        return jsonify({"error": error}), 400
     try:
         with closing(get_connection()) as conn:
             with conn:
-                cursor = conn.execute("INSERT INTO bancos (usuario_id, nombre) VALUES (?, ?)", (uid(), nombre))
+                cursor = conn.execute(
+                    "INSERT INTO bancos (usuario_id, nombre, tipo, numero_cuenta) VALUES (?, ?, ?, ?)",
+                    (uid(), campos["nombre"], campos["tipo"], campos["numero_cuenta"]),
+                )
                 nuevo_id = cursor.lastrowid
     except sqlite3.IntegrityError:
-        return jsonify({"error": "Ya existe un banco con ese nombre."}), 409
-    return jsonify({"id": nuevo_id, "nombre": nombre}), 201
+        return jsonify({"error": MENSAJE_BANCO_REPETIDO}), 409
+    banco = {"id": nuevo_id, **campos}
+    return jsonify({**banco, "etiqueta": etiqueta_banco(banco["nombre"], banco["tipo"], banco["numero_cuenta"])}), 201
+
+
+@app.route("/api/bancos/<int:banco_id>", methods=["PATCH"])
+@login_requerido
+def actualizar_banco(banco_id):
+    """Edita el nombre, el tipo y/o el número de cuenta (por ejemplo, para completar bancos antiguos)."""
+    datos = request.get_json(silent=True)
+    if not isinstance(datos, dict) or not ({"nombre", "tipo", "numero_cuenta"} & datos.keys()):
+        return jsonify({"error": "Indica qué quieres cambiar: nombre, tipo o número de cuenta."}), 400
+    campos, error = validar_banco(datos, parcial=True)
+    if error:
+        return jsonify({"error": error}), 400
+    try:
+        with closing(get_connection()) as conn:
+            with conn:
+                cursor = conn.execute(
+                    f"UPDATE bancos SET {', '.join(f'{c} = ?' for c in campos)} WHERE id = ? AND usuario_id = ?",
+                    (*campos.values(), banco_id, uid()),
+                )
+            if cursor.rowcount == 0:
+                return jsonify({"error": "Banco no encontrado."}), 404
+            fila = conn.execute(
+                "SELECT id, nombre, tipo, numero_cuenta FROM bancos WHERE id = ?", (banco_id,)
+            ).fetchone()
+    except sqlite3.IntegrityError:
+        return jsonify({"error": MENSAJE_BANCO_REPETIDO}), 409
+    return jsonify(banco_a_dict(fila))
 
 
 # ====================== Movimientos (gastos e ingresos) ======================
@@ -461,11 +545,18 @@ def listar_gastos():
     with closing(get_connection()) as conn:
         filas = conn.execute(
             "SELECT g.id, g.fecha, g.concepto, g.monto, g.tipo, g.categoria, g.descripcion, g.banco_id, "
-            "b.nombre AS banco FROM gastos g LEFT JOIN bancos b ON b.id = g.banco_id "
+            "b.nombre AS banco_nombre, b.tipo AS banco_tipo, b.numero_cuenta AS banco_numero "
+            "FROM gastos g LEFT JOIN bancos b ON b.id = g.banco_id "
             "WHERE g.usuario_id = ? ORDER BY g.fecha DESC, g.id DESC",
             (uid(),),
         ).fetchall()
-    return jsonify([fila_a_dict(f) for f in filas])
+    resultado = []
+    for f in filas:
+        m = fila_a_dict(f)
+        nombre, tipo, numero = m.pop("banco_nombre"), m.pop("banco_tipo"), m.pop("banco_numero")
+        m["banco"] = etiqueta_banco(nombre, tipo, numero) if nombre else None  # «Bancolombia · Ahorros ••1234»
+        resultado.append(m)
+    return jsonify(resultado)
 
 
 @app.route("/api/gastos", methods=["POST"])

@@ -25,25 +25,30 @@ def _columnas(conn, tabla):
     return [f["name"] for f in conn.execute(f"PRAGMA table_info({tabla})")]
 
 
-def _tabla_nombres_por_usuario(conn, tabla, extra=""):
-    """bancos y categorias: el nombre es único POR USUARIO (dos cuentas pueden tener 'Efectivo').
-    En bases antiguas el nombre era único para todos, así que se reconstruye la tabla
-    (procedimiento recomendado por SQLite: crear nueva, copiar, borrar la vieja, renombrar)."""
-    esquema = f"""
-        CREATE TABLE {{nombre}} (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            usuario_id INTEGER REFERENCES usuarios(id),
-            nombre     TEXT NOT NULL COLLATE NOCASE,{extra}
-            UNIQUE (usuario_id, nombre)
-        )"""
+def _tabla_por_usuario(conn, tabla, extra, unico, requeridas):
+    """bancos y categorias: lo que identifica a cada fila es único POR USUARIO (dos cuentas pueden tener
+    un banco 'Efectivo'). Si la tabla es de una versión anterior y le faltan columnas, se reconstruye con el
+    procedimiento recomendado por SQLite: crear la nueva, copiar, borrar la vieja y renombrar."""
+    def esquema(nombre):
+        return (
+            f"CREATE TABLE {nombre} ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "usuario_id INTEGER REFERENCES usuarios(id), "
+            f"nombre TEXT NOT NULL COLLATE NOCASE, {extra} UNIQUE ({unico}))"
+        )
+
     existe = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
     if not existe:
-        conn.execute(esquema.format(nombre=tabla))
-    elif "usuario_id" not in _columnas(conn, tabla):
-        conn.execute(esquema.format(nombre=f"{tabla}_nueva"))
-        conn.execute(f"INSERT INTO {tabla}_nueva (id, nombre) SELECT id, nombre FROM {tabla}")
-        conn.execute(f"DROP TABLE {tabla}")
-        conn.execute(f"ALTER TABLE {tabla}_nueva RENAME TO {tabla}")
+        conn.execute(esquema(tabla))
+        return
+    columnas = _columnas(conn, tabla)
+    if all(c in columnas for c in requeridas):
+        return
+    copiar = ", ".join(c for c in ("id", "usuario_id", "nombre") if c in columnas)
+    conn.execute(esquema(f"{tabla}_nueva"))
+    conn.execute(f"INSERT INTO {tabla}_nueva ({copiar}) SELECT {copiar} FROM {tabla}")
+    conn.execute(f"DROP TABLE {tabla}")
+    conn.execute(f"ALTER TABLE {tabla}_nueva RENAME TO {tabla}")
 
 
 def init_db():
@@ -86,8 +91,15 @@ def init_db():
                 conn.execute("ALTER TABLE gastos ADD COLUMN tipo TEXT NOT NULL DEFAULT 'gasto'")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_gastos_usuario ON gastos (usuario_id, fecha)")
 
-            _tabla_nombres_por_usuario(conn, "bancos")
-            _tabla_nombres_por_usuario(conn, "categorias", extra="\n            tipo       TEXT NOT NULL DEFAULT 'gasto',")
+            # Un banco se identifica por nombre + tipo de cuenta + número (se puede tener «Bancolombia» de
+            # ahorros y «Bancolombia» de crédito). Los bancos anteriores quedan con tipo y número vacíos.
+            _tabla_por_usuario(
+                conn, "bancos",
+                "tipo TEXT NOT NULL DEFAULT '', numero_cuenta TEXT NOT NULL DEFAULT '',",
+                "usuario_id, nombre, tipo, numero_cuenta",
+                ("usuario_id", "tipo", "numero_cuenta"),
+            )
+            _tabla_por_usuario(conn, "categorias", "tipo TEXT NOT NULL DEFAULT 'gasto',", "usuario_id, nombre", ("usuario_id",))
             if "tipo" not in _columnas(conn, "categorias"):
                 conn.execute("ALTER TABLE categorias ADD COLUMN tipo TEXT NOT NULL DEFAULT 'gasto'")
             _asegurar_categorias_ingreso(conn)
